@@ -26,6 +26,7 @@ parse:
 sphinx:
   extra_extensions:
     - sphinx_copybutton
+    - sphinx_design
     - sphinxcontrib.mermaid
   config:
     # Generate anchors for h1-h3 headings so cross-file [text](page.md#heading) links resolve

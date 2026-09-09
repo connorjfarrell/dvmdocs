@@ -4,6 +4,13 @@ This site is a [Jupyter Book](https://jupyterbook.org/) built from Markdown (MyS
 the [`DVMProject/dvmdocs`](https://github.com/DVMProject/dvmdocs) repository. Corrections and
 new content are welcome.
 
+```{note}
+Much of the current content was drafted with AI assistance from the upstream project
+repositories. Treat it as a starting point: verify against the relevant repo before relying
+on any detail, and fix anything that's wrong or stale — that's exactly the kind of
+contribution this project needs.
+```
+
 ## Build it locally
 
 ```{important}
