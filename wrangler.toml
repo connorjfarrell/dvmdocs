@@ -13,6 +13,11 @@
 name = "dvmdocs"
 compatibility_date = "2025-09-01"
 
+# Serve the production build at dvmdocs.<subdomain>.workers.dev and give every
+# non-production branch its own preview URL. (Explicit to silence deploy warnings.)
+workers_dev = true
+preview_urls = true
+
 [assets]
 directory = "./dvmdocs/_build/html"
 # Serve /foo/ -> /foo/index.html and keep pretty URLs.
