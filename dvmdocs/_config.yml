@@ -19,6 +19,12 @@ latex:
 bibtex_bibfiles:
   - references.bib
 
+# Sphinx / MyST configuration
+sphinx:
+  config:
+    # Generate anchors for h1-h3 headings so cross-file [text](page.md#heading) links resolve
+    myst_heading_anchors: 3
+
 # Information about where the book exists on the web
 repository:
   url: https://github.com/DVMProject/dvmdocs
@@ -30,4 +36,4 @@ repository:
 html:
   use_issues_button: true
   use_repository_button: true
-  announcement: "These documents are actively being worked on by the DVMProject team. They are not mature, and several pages may be lacking in content or entirely blank."
+  announcement: "These documents are actively being improved by the DVMProject community. Some pages are still incomplete — corrections and pull requests are welcome at https://github.com/DVMProject/dvmdocs"
