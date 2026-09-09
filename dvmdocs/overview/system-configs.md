@@ -115,3 +115,11 @@ To link multiple sites, conventional or trunked, each `dvmhost` connects to a
 
 Consoles ([Desktop Dispatch Console](../software/dvmconsole.md)) and analog bridges
 ([`dvmbridge`](../software/dvmhost/dvmbridge.md)) also connect to the FNE as peers.
+
+## Source / further reading
+
+- Annotated host config: <https://github.com/DVMProject/dvmhost/blob/master/configs/config.example.yml>
+- Annotated FNE config: <https://github.com/DVMProject/dvmhost/blob/master/configs/fne-config.example.yml>
+- Example `talkgroup_rules` / `adj_site_map` / ACL files: <https://github.com/DVMProject/dvmhost/tree/master/configs>
+- Network stack technical note: `docs/TN.1000` in <https://github.com/DVMProject/dvmhost/tree/master/docs>
+- `iden-channel-calculator` (channel plan / `iden_table.dat`): <https://github.com/DVMProject/iden-channel-calculator>

@@ -44,3 +44,9 @@ Work through the questions below, then follow the links to the relevant guides.
 5. If networking, [set up a `dvmfne`](../software/dvmhost/dvmfne.md).
 6. Refer to the [example system configurations](system-configs.md) for wiring your specific
    system together.
+
+## Source / further reading
+
+- `dvmhost` README (build, calibration, CLI reference): <https://github.com/DVMProject/dvmhost/blob/master/README.md>
+- Usage & support policy: <https://github.com/DVMProject/dvmhost/blob/master/usage_guidelines.md>
+- All project repositories: [Introduction → Project repositories](introduction.md#project-repositories)

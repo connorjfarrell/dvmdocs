@@ -67,3 +67,12 @@ revision 2.0 or greater is required for use with `dvmhost`.
 Cross-compilation support for the Raspberry Pi 1/2/3 was removed in DVM R05A02. Use a
 Raspberry Pi 4 or newer (or an x86_64 host) for new installs.
 ```
+
+## Source / further reading
+
+- DVM-V1 hardware: <https://github.com/DVMProject/dvmv1>
+- DVM-V24 hardware: <https://github.com/DVMProject/dvmv24>
+- Modem firmware (supported board list): <https://github.com/DVMProject/dvmfirmware>
+- Hotspot firmware: <https://github.com/DVMProject/dvmfirmware-hs>
+- `dvmhost` hardware requirements: <https://github.com/DVMProject/dvmhost/blob/master/README.md#hardware-requirements>
+- Upstream MMDVM project: <https://github.com/g4klx/MMDVM>

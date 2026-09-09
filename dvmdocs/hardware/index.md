@@ -28,3 +28,9 @@ firmware revision 2.0 or newer. Two hardware revisions exist — the original V1
 V2, which moves USB↔serial onto a dedicated CP2102 to fix lockups.
 
 [Read more](dvm-v24.md)
+
+## Source
+
+- DVM-V1 repository (schematics, interactive BOM): <https://github.com/DVMProject/dvmv1>
+- DVM-V24 repository (schematics, firmware): <https://github.com/DVMProject/dvmv24>
+- Upstream MMDVM design: <https://github.com/g4klx/MMDVM>

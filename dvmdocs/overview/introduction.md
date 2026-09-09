@@ -65,3 +65,18 @@ in the `dvmhost` repository.
 
 - **Discord:** <https://discord.gg/3pBe8xgrEz>
 - **Source & issues:** <https://github.com/DVMProject>
+
+## Project repositories
+
+| Repository | Purpose |
+|------------|---------|
+| [`dvmhost`](https://github.com/DVMProject/dvmhost) | Core application suite (`dvmhost`, `dvmfne`, `dvmbridge`, `dvmpatch`, `dvmcmd`) and technical documentation. |
+| [`dvmfirmware`](https://github.com/DVMProject/dvmfirmware) | Modem firmware (STM32F4 / Arduino Due). |
+| [`dvmfirmware-hs`](https://github.com/DVMProject/dvmfirmware-hs) | Hotspot firmware (STM32F1 + ADF7021). |
+| [`dvmv1`](https://github.com/DVMProject/dvmv1) | DVM-V1 duplex modem hardware. |
+| [`dvmv24`](https://github.com/DVMProject/dvmv24) | DVM-V24 Motorola V.24 USB adapter hardware/firmware. |
+| [`dvmconsole`](https://github.com/DVMProject/dvmconsole) | Desktop Dispatch Console. |
+| [`dvmprov`](https://github.com/DVMProject/dvmprov) | FNE provisioning web tool (archived). |
+| [`dvmbridge` helpers](https://github.com/DVMProject/dvmusrp) · [`pydvm`](https://github.com/DVMProject/pydvm) · [`dvmvocoder`](https://github.com/DVMProject/dvmvocoder) · [`fnecore`](https://github.com/DVMProject/fnecore) · [`iden-channel-calculator`](https://github.com/DVMProject/iden-channel-calculator) | Supporting libraries and utilities. |
+
+The full organization is at <https://github.com/DVMProject>.
