@@ -1,0 +1,20 @@
+# Cloudflare deployment for the documentation site.
+#
+# This is an "assets-only" Worker: there is no server code, Cloudflare just
+# serves the static files that `jupyter-book build dvmdocs/` produces.
+#
+# Used by the Cloudflare Git integration (Workers Builds):
+#   Build command:  pip install -r dvmdocs/requirements.txt && jupyter-book build dvmdocs/
+#   Deploy command: npx --yes wrangler@4 deploy
+#
+# This file is fork/preview infrastructure and can be removed before the
+# upstream pull request.
+
+name = "dvmdocs"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "./dvmdocs/_build/html"
+# Serve /foo/ -> /foo/index.html and keep pretty URLs.
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"

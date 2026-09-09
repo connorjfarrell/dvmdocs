@@ -3,39 +3,47 @@
 The book is a static site (`jupyter-book build dvmdocs/` → `dvmdocs/_build/html/`), so it can
 be hosted anywhere that serves static files. Two turnkey options are described below.
 
+> Fork/preview infrastructure: `wrangler.toml`, `.python-version`, and this file can all be
+> removed before the upstream pull request.
+
 ---
 
-## Cloudflare Pages (recommended)
+## Cloudflare (recommended)
 
 Best when the domain's DNS is already on Cloudflare — adding a custom subdomain is one click
-and HTTPS is automatic. Cloudflare builds the site itself on every push; no CI secrets, no
-workflow file.
+and HTTPS is automatic. Cloudflare builds the site itself on every push; no CI secrets.
+
+The repo ships [`wrangler.toml`](wrangler.toml) (an assets-only Worker — no server code, just
+the static `dvmdocs/_build/html/` output) and [`.python-version`](.python-version).
 
 ### One-time setup
 
-1. **Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git.**
-2. Select the repository (e.g. `connorjfarrell/dvmdocs`) and the branch to deploy (`main`).
-3. **Build settings:**
-   | Setting | Value |
-   |---------|-------|
-   | Framework preset | `None` |
+1. **Cloudflare dashboard → Workers & Pages → Create → Import a repository** (or *Connect to
+   Git*). Select the repo and the production branch (`main`).
+2. Fill in the fields:
+   | Field | Value |
+   |-------|-------|
+   | Project name | `dvmdocs` (must match `name` in `wrangler.toml`) |
    | Build command | `pip install -r dvmdocs/requirements.txt && jupyter-book build dvmdocs/` |
-   | Build output directory | `dvmdocs/_build/html` |
-   | Root directory | *(leave as `/`)* |
-4. **Settings → Environment variables → add:** `PYTHON_VERSION` = `3.12`
-5. **Settings → Build → Build system version:** ensure **v2** (or later) — v1 only ships an old
-   Python.
-6. Save and deploy. You get a `https://<project>.pages.dev` URL, plus an automatic preview
-   URL for every pull request.
+   | Deploy command | `npx --yes wrangler@4 deploy` |
+   | Builds for non-production branches | ✅ enable (gives every PR a preview URL) |
+   | Advanced → non-production branch deploy command | `npx --yes wrangler@4 versions upload` |
+   | Advanced → path | `/` |
+3. If the build can't find Python / pip, add an environment variable `PYTHON_VERSION` = `3.12`
+   (the `.python-version` file should already handle this).
+4. Save and deploy. Production is served at
+   `https://dvmdocs.<your-workers-subdomain>.workers.dev`; non-production branches get
+   `versions upload` preview URLs.
 
 ### Custom domain
 
-1. Project → **Custom domains → Set up a domain** → enter `dvmdocs.wg1gem.com`.
-2. Because `wg1gem.com` is on Cloudflare, the required `CNAME` record is created automatically
-   and the certificate is issued within a minute or two.
+1. Open the deployed Worker → **Settings → Domains & Routes → Add → Custom Domain** →
+   `dvmdocs.wg1gem.com`.
+2. Because `wg1gem.com` is on Cloudflare, the `CNAME` record is created automatically and the
+   certificate is issued within a minute or two.
 
-Nothing about the output needs `.nojekyll` — Cloudflare Pages does not run Jekyll, so the
-`_static` / `_images` / `_sources` directories serve correctly.
+No `.nojekyll` needed — Cloudflare does not run Jekyll, so the `_static` / `_images` /
+`_sources` directories serve correctly.
 
 ---
 
