@@ -5,25 +5,33 @@ title: DVMProject Documentation
 author: The DVMProject Development Team
 logo: media/logos/project.png
 
-# Force re-execution of notebooks on each build.
-# See https://jupyterbook.org/content/execute.html
+# There are no executable notebooks in this book.
 execute:
-  execute_notebooks: force
+  execute_notebooks: "off"
 
 # Define the name of the latex output file for PDF builds
 latex:
   latex_documents:
     targetname: book.tex
 
-# Add a bibtex file so that we can create citations
-bibtex_bibfiles:
-  - references.bib
+# MyST parser extensions
+parse:
+  myst_enable_extensions:
+    - colon_fence
+    - deflist
+    - linkify
+    - substitution
 
 # Sphinx / MyST configuration
 sphinx:
+  extra_extensions:
+    - sphinx_copybutton
+    - sphinxcontrib.mermaid
   config:
     # Generate anchors for h1-h3 headings so cross-file [text](page.md#heading) links resolve
     myst_heading_anchors: 3
+    # Don't fail the build on non-fatal warnings, but do surface them
+    nitpicky: false
 
 # Information about where the book exists on the web
 repository:
@@ -36,4 +44,5 @@ repository:
 html:
   use_issues_button: true
   use_repository_button: true
+  use_edit_page_button: true
   announcement: "These documents are actively being improved by the DVMProject community. Some pages are still incomplete — corrections and pull requests are welcome at https://github.com/DVMProject/dvmdocs"

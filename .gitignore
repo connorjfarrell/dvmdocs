@@ -175,3 +175,6 @@ cython_debug/
 
 # Build artifacts
 _build/
+
+# Claude Code local tooling
+.claude/

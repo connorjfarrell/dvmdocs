@@ -10,6 +10,7 @@ parts:
     - file: overview/supported-hardware.md
     - file: overview/getting-started.md
     - file: overview/system-configs.md
+    - file: overview/glossary.md
   - caption: Software
     chapters:
     - file: software/dvmhost/index.md
@@ -32,3 +33,14 @@ parts:
       sections:
       - file: hardware/dvm-v1.md
       - file: hardware/dvm-v24.md
+  - caption: Guides
+    chapters:
+    - file: guides/iden-tables.md
+    - file: guides/networking.md
+    - file: guides/encryption.md
+    - file: guides/analog-bridging.md
+    - file: guides/migrating-from-pi-star.md
+    - file: guides/troubleshooting.md
+  - caption: Project
+    chapters:
+    - file: contributing.md
