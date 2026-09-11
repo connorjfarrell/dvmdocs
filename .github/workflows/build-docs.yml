@@ -1,0 +1,37 @@
+name: Build docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r dvmdocs/requirements.txt
+
+      - name: Build the book (warnings are errors)
+        run: jupyter-book build dvmdocs/ --warningiserror --keep-going
+
+      - name: Check for broken links
+        run: jupyter-book build dvmdocs/ --builder linkcheck
+        continue-on-error: true
+
+      - name: Upload built HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: html
+          path: dvmdocs/_build/html

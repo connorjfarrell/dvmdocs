@@ -1,16 +1,28 @@
-# DVMFirware Hotspot & Modem Firmware
+# DVMFirmware Hotspot & Modem Firmware
 
-DVMProject maintains heavily upgraded and rewritten forks of the original MMDVM hotspot and modem firmware. 
-**It is required** to run these DVMProject firmware forks to interface DVM modems and hotspots with [dvmhost](/dvmdocs/software/dvmhost/dvmhost.md)
+DVMProject maintains heavily rewritten forks of the original MMDVM hotspot and modem firmware.
+**These forks are required** to interface DVM modems and hotspots with
+[`dvmhost`](../dvmhost/dvmhost.md); stock MMDVM firmware is not compatible with the DVM modem
+protocol.
 
-## `dvmfirmware` modem firmware
+Both forks support DMR, P25, and NXDN. NXDN support is considered **experimental**.
 
-This firmware is used by STM32- or Arduino Due-based modem boards, including the [dvm-v1](/dvmdocs/hardware/dvm-v1.md).
+## `dvmfirmware` — modem firmware
 
-[Read More](dvmfirmware.md)
+For STM32F4- or Arduino Due–based full-power modem boards, including the
+[DVM-V1](../../hardware/dvm-v1.md), RepeaterBuilder STM32 (POG), WA0EDA, and generic STM32F4
+boards.
 
-## `dvmfirmware-hs` hotspot firmware
+[Read more](dvmfirmware.md)
 
-This firmware is used by STM32 hotspot boards utilizing the ADF7021 RF modem ICs. `dvmfirmware-hs` supports both simplex and duplex hotspot boards.
+## `dvmfirmware-hs` — hotspot firmware
 
-[Read More](dvmfirmware-hs.md)
+For STM32F1 hotspot boards using the ADF7021 RF transceiver IC (`MMDVM_HS` and derivatives).
+Supports simplex and duplex hotspot boards.
+
+[Read more](dvmfirmware-hs.md)
+
+## Source
+
+- Modem firmware: <https://github.com/DVMProject/dvmfirmware>
+- Hotspot firmware: <https://github.com/DVMProject/dvmfirmware-hs>

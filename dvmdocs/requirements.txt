@@ -1,4 +1,6 @@
-jupyter-book
-matplotlib
-numpy
-sphinx
+# The documentation is a Jupyter Book v1 (Sphinx-based) project. Jupyter Book v2
+# (mystmd) does not read this repo's _config.yml / _toc.yml, so v1 must be pinned.
+jupyter-book>=1.0.0,<2
+sphinx-copybutton
+sphinx-design
+sphinxcontrib-mermaid
