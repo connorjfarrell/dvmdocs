@@ -198,21 +198,37 @@ Both boards are the same `MMDVM_HS_Dual` type, so build once and flash it to bot
 
 ## 4. Build the `iden_table.dat`
 
-Both instances share one `iden_table.dat`. Because these are true duplex boards, each channel
-needs a real **Tx/Rx split**, not a single simplex frequency — that's what `Input Offset` is
-for. See the [Channel Identity Tables guide](iden-tables.md) for the general math (base
-frequency = radio Rx / site Tx; base + offset = radio Tx / site Rx).
+Both instances share **one row** of `iden_table.dat`. A row is a band anchor — a **Base Freq**
+plus a **Spacing** (the channel raster) — not a slot for one specific frequency. You get an
+actual operating frequency by picking a `channelNo` and computing
+`Base Freq + (channelNo × Spacing)`; going the other direction,
+`channelNo = (your frequency − Base Freq) / Spacing`. `Input Offset` is then added on top to
+get the Tx/Rx split side (that's what makes these boards genuinely duplex, not simplex). See
+the [Channel Identity Tables guide](iden-tables.md) for the general math.
+
+```{note}
+DVMProject currently supports FDMA modes only (P25 Phase 1, DMR, NXDN — no TDMA/Phase 2), and
+the project's own example tables use a **6.25 kHz raster** even for 12.5 kHz-wide channels —
+so `Spacing` below is `6.25`, not `12.5`. `Bandwidth` (the actual occupied channel width) stays
+`12.5`. Getting `Spacing` wrong doesn't break any one frequency's math by itself, but it breaks
+every *other* channel number on that identity row, and it doesn't match the raster every other
+DVMProject table uses — don't deviate from it without a reason.
+```
 
 ```{code-block} text
 :caption: iden_table.dat
 
 # ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
-0,451800000,12.5,5.000,12.5,
-1,464500000,12.5,5.000,12.5,
+0,450000000,6.25,5.000,12.5,
 ```
 
-- **CC** (Hotspot 1): `channelId: 0`, `channelNo: 0` → 451.800000 / 456.800000 MHz
-- **VC** (Hotspot 2): `channelId: 1`, `channelNo: 0` → 464.500000 / 469.500000 MHz
+One identity (`ChId 0`) anchored at 450.000000 MHz covers both channels — they're both on the
+same +5 MHz duplex split, just at different points on the raster:
+
+- **CC** (Hotspot 1) at 451.800 MHz: `channelNo = (451.800 − 450.000) MHz / 6.25 kHz = 1800 kHz / 6.25 kHz = 288`
+  → `channelId: 0`, `channelNo: 288` → output 451.800000 MHz, input 456.800000 MHz
+- **VC** (Hotspot 2) at 464.500 MHz: `channelNo = (464.500 − 450.000) MHz / 6.25 kHz = 14500 kHz / 6.25 kHz = 2320`
+  → `channelId: 0`, `channelNo: 2320` → output 464.500000 MHz, input 469.500000 MHz
 
 Copy the same `iden_table.dat` to both instances' config directories.
 
@@ -224,7 +240,13 @@ Lay out two independent instance directories:
 sudo mkdir -p /opt/dvm/cc /opt/dvm/vc
 sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/cc/config.yml
 sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/vc/config.yml
-sudo cp /opt/dvm/configs/iden_table.example.dat /opt/dvm/cc/iden_table.dat
+```
+
+Replace the contents of `/opt/dvm/cc/iden_table.dat` with the single-row table from step 4
+(not the stock `iden_table.example.dat`), then copy it to the VC as-is — both hosts read the
+same table:
+
+```bash
 sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
 ```
 
@@ -260,7 +282,7 @@ system:
 |-------|-------|-----|
 | `system.modem.protocol.uart.port` | `/dev/dvm-cc` | Talks to the CC board. |
 | `system.identity` / `cwId.callsign` | e.g. `N0CALL-CC` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `0` / `0` | 451.800/456.800 MHz (step 4). |
+| `system.config.channelId` / `channelNo` | `0` / `288` | 451.800/456.800 MHz (step 4). |
 | `system.config.authoritative` | `true` | This host handles channel grants. |
 | `protocols.p25.control.enable` | `true` | Turns this channel into a CC. |
 | `protocols.p25.control.dedicated` | `true` | Dedicated CC — signalling only, no voice. |
@@ -273,8 +295,8 @@ system:
 system:
   config:
     voiceChNo:
-      - channelId: 1
-        channelNo: 0
+      - channelId: 0
+        channelNo: 2320
         rpcAddress: 127.0.0.1
         rpcPort: 9891          # the VC's own rpcPort, from its config below
         rpcPassword: "VC-RPC-PASSWORD"   # must match the VC's network.rpcPassword
@@ -286,7 +308,7 @@ system:
 |-------|-------|-----|
 | `system.modem.protocol.uart.port` | `/dev/dvm-vc` | Talks to the VC board. |
 | `system.identity` / `cwId.callsign` | e.g. `N0CALL-VC` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `1` / `0` | 464.500/469.500 MHz (step 4). |
+| `system.config.channelId` / `channelNo` | `0` / `2320` | 464.500/469.500 MHz (step 4). |
 | `system.config.authoritative` | `false` | The CC handles grants, not this host. |
 | `protocols.p25.control.enable` | `false` | This channel only carries voice. |
 | `network.rpcAddress` / `rpcPort` / `rpcPassword` | `127.0.0.1` / `9891` / `"VC-RPC-PASSWORD"` | This host's own RPC listener — referenced by the CC's `voiceChNo` entry above. |
