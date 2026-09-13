@@ -35,6 +35,7 @@ parts:
       - file: hardware/dvm-v24.md
   - caption: Guides
     chapters:
+    - file: guides/dual-hotspot-x86-quickstart.md
     - file: guides/iden-tables.md
     - file: guides/networking.md
     - file: guides/encryption.md
