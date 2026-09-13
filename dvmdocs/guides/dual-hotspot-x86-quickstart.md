@@ -1,27 +1,49 @@
-# Quickstart: Dual-Hotspot Node on an x86 PC
+# Quickstart: Dual-Hotspot P25 Trunked Node (x86)
 
 ```{warning}
-**Work in progress.** This guide has not yet been run end-to-end or verified against a real
-dual-board setup — in particular the USB bootloader-flashing steps (BOOT0 jumper location,
-exact `stm32flash` invocation) are inferred from the same mechanism used elsewhere in these
-docs, not confirmed on hardware. Treat it as a starting point, cross-check against your
-board's own documentation, and see something wrong? Fix it — see [Contributing](../contributing.md).
+**Work in progress.** This guide has not yet been run end-to-end or verified against real
+hardware — in particular the USB bootloader-flashing steps (BOOT0 jumper location, exact
+`stm32flash` invocation) are inferred from the same mechanism used elsewhere in these docs,
+not confirmed on hardware, and the trunking RPC wiring has not been tested on an actual
+simplex-hotspot pair. Treat it as a starting point, cross-check against your board's own
+documentation and the [P25 trunking reference](../overview/system-configs.md),
+and see something wrong? Fix it — see [Contributing](../contributing.md).
 ```
 
-This is an end-to-end path from a bare x86/x86_64 Linux box to a single machine running
-**two independent hotspot channels** — e.g. one DMR hotspot and one P25 hotspot, or two
-talkgroups/frequencies of the same mode — off of two separate USB hotspot boards. It's a
-common alternative to running two Raspberry Pis: one reasonably modern PC easily has the
-cores for two `dvmhost` instances.
+This is an end-to-end path from a bare x86/x86_64 Linux box to a single machine running a
+**minimal one-site P25 trunked system**: two USB hotspot boards on one PC, one dedicated to
+the **control channel (CC)** and one dedicated to a **voice channel (VC)**. It's a cheap way to
+stand up and learn trunking without a repeater or a second computer — one reasonably modern PC
+easily has the cores for two `dvmhost` instances.
 
 ```{note}
-"Dual hotspot" here means **two separate boards, two separate `dvmhost` instances**. If you
-instead have a single physical board with two ADF7021 chips on it for full-duplex operation
-(e.g. an `MMDVM_HS_Dual_Hat`-style board), that's one hotspot with duplex Rx/Tx, normally
-wired to a Raspberry Pi's GPIO rather than USB — see
-[`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md) instead. Everything below still
-applies to *installing and configuring* it as a single instance.
+"Dual hotspot" here means **two separate boards, two separate `dvmhost` instances**, one CC and
+one VC, coordinating over a local RPC link. If you instead have a single physical board with
+two ADF7021 chips on it for full-duplex operation (e.g. an `MMDVM_HS_Dual_Hat`-style board),
+that's one *duplex* hotspot, normally wired to a Raspberry Pi's GPIO rather than USB — see
+[`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md) instead.
+
+Hotspot boards are typically low-power **simplex** boards (one frequency, shared Tx/Rx). A
+real trunking site normally wants duplex (repeater) hardware so the CC can transmit and
+receive at the same time. This guide's CC and VC each sit on their own simplex frequency
+instead, which is a fine way to *learn and test* trunking behavior, but treat it as a lab
+setup, not a production site.
 ```
+
+## The example system
+
+| | Frequency | Role |
+|---|---|---|
+| Hotspot 1 | **451.800 MHz** | Control Channel (CC) — dedicated |
+| Hotspot 2 | **464.500 MHz** | Voice Channel (VC) |
+
+| Parameter | Value |
+|---|---|
+| WACN (`netId`) | `DEE00` |
+| System ID (`sysId`) | `123` |
+| RFSS ID | `1` |
+| Site ID | `1` |
+| NAC | `293` *(example — pick your own, must match on both channels)* |
 
 ## What you'll end up with
 
@@ -29,8 +51,9 @@ applies to *installing and configuring* it as a single instance.
 - A single `dvmhost` build, used by two systemd services with two config files
 - Two USB-connected ADF7021 hotspot boards, each flashed with
   [`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md)
-- Two independently calibrated channels, standalone or both linked to an
-  [FNE](../software/dvmhost/dvmfne.md)
+- A working one-site P25 trunked system: radios register on the CC (451.800 MHz) and get
+  granted to the VC (464.500 MHz) for calls
+- Standalone, or linked to an [FNE](../software/dvmhost/dvmfne.md) for a wider network
 
 ## 1. Prep the PC
 
@@ -59,13 +82,13 @@ udevadm info -a -n /dev/ttyUSB1 | grep -m1 serial
 ```{code-block} text
 :caption: /etc/udev/rules.d/99-dvm-hotspots.rules
 
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{serial}=="AB0001", SYMLINK+="dvm-hs1"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{serial}=="AB0002", SYMLINK+="dvm-hs2"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{serial}=="AB0001", SYMLINK+="dvm-cc"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{serial}=="AB0002", SYMLINK+="dvm-vc"
 ```
 
 (`idVendor` `10c4` is Silicon Labs CP210x, common on these boards; adjust for CH340/FTDI.)
 Reload with `sudo udevadm control --reload && sudo udevadm trigger`, then confirm
-`/dev/dvm-hs1` and `/dev/dvm-hs2` exist. Use these symlinks — not `/dev/ttyUSBx` — in both
+`/dev/dvm-cc` and `/dev/dvm-vc` exist. Use these symlinks — not `/dev/ttyUSBx` — in both
 config files below.
 
 ## 2. Build `dvmhost` once
@@ -101,55 +124,131 @@ make -f Makefile.STM32FX <your-board-type>
    board's documentation; boards vary here, so check the seller's instructions.
 2. Flash over its stable serial device:
    ```bash
-   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/dvm-hs1
-   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/dvm-hs2
+   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/dvm-cc
+   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/dvm-vc
    ```
 3. Remove the boot jumper and power-cycle (or `-R` above already resets it).
 
-## 4. Plan two channels in `iden_table.dat`
+## 4. Build the `iden_table.dat`
 
-Both instances can share one `iden_table.dat` — just give each hotspot its own
-`channelId`/`channelNo` row (or the same identity with two different channel numbers). See the
-[Channel Identity Tables guide](iden-tables.md) if you need to build this from scratch. Example
-covering a DMR hotspot and a P25 hotspot on different UHF frequencies:
+Both instances share one `iden_table.dat` — a row per channel, each anchored directly on its
+operating frequency (no repeater offset needed since these are simplex boards). See the
+[Channel Identity Tables guide](iden-tables.md) for the general math.
 
-```text
+```{code-block} text
+:caption: iden_table.dat
+
 # ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
-1,441000000,12.5,0,12.5,
+0,451800000,12.5,0.000,12.5,
+1,464500000,12.5,0.000,12.5,
 ```
 
-- Hotspot 1 (DMR): `channelId: 1`, `channelNo: 0` → 441.000000 MHz
-- Hotspot 2 (P25): `channelId: 1`, `channelNo: 8` → 441.100000 MHz
+- **CC** (Hotspot 1): `channelId: 0`, `channelNo: 0` → 451.800000 MHz
+- **VC** (Hotspot 2): `channelId: 1`, `channelNo: 0` → 464.500000 MHz
 
-Copy this same `iden_table.dat` to both instances' config directories (or point both at one
-shared path — either works since hotspots are simplex, single-channel).
+Copy the same `iden_table.dat` to both instances' config directories.
 
-## 5. Two configs, two identities
+## 5. Two configs, one trunked site
 
 Lay out two independent instance directories:
 
 ```bash
-sudo mkdir -p /opt/dvm/hotspot1 /opt/dvm/hotspot2
-sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/hotspot1/config.yml
-sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/hotspot2/config.yml
-sudo cp /opt/dvm/configs/iden_table.example.dat /opt/dvm/hotspot1/iden_table.dat
-sudo cp /opt/dvm/hotspot1/iden_table.dat /opt/dvm/hotspot2/iden_table.dat
+sudo mkdir -p /opt/dvm/cc /opt/dvm/vc
+sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/cc/config.yml
+sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/vc/config.yml
+sudo cp /opt/dvm/configs/iden_table.example.dat /opt/dvm/cc/iden_table.dat
+sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
 ```
 
-Edit **each** `config.yml` — the fields that must differ between the two instances:
+Both hosts run **P25 only**, simplex, sharing the same site identity — only the channel and
+CC/VC-specific fields differ.
 
-| Field | Hotspot 1 | Hotspot 2 | Why |
-|-------|-----------|-----------|-----|
-| `system.modem.protocol.uart.port` | `/dev/dvm-hs1` | `/dev/dvm-hs2` | Each talks to its own board. |
-| `system.identity` / `cwId.callsign` | e.g. `N0CALL-1` | `N0CALL-2` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `1` / `0` | `1` / `8` | From step 4. |
-| `protocols.dmr.enable` / `protocols.p25.enable` / etc. | pick one mode (or mixed) | pick one mode (or mixed) | Independent per hotspot. |
-| `system.config.colorCode` (DMR) or `nac` (P25) or `ran` (NXDN) | your values | your values | Must not collide if the two are ever audible to the same radio. |
-| `network.id` (if networked) | unique peer ID | unique peer ID | FNE requires unique peer IDs. |
-| `network.rpcAddress` / `rpcPort`, `network.restPort` | e.g. `9890` / `9990` | e.g. `9891` / `9991` | Two processes can't bind the same port on one host. |
-| `log.filePath` / `log.fileRoot` | e.g. `/opt/dvm/hotspot1`, `DVM1` | e.g. `/opt/dvm/hotspot2`, `DVM2` | Keep logs from overwriting each other. |
+### Common to both `config.yml`
 
-Set `iAgreeNotToBeStupid: true` in both.
+```yaml
+protocols:
+  p25:
+    enable: true
+  dmr:
+    enable: false
+  nxdn:
+    enable: false
+
+system:
+  duplex: false
+  simplexSameFrequency: true
+  config:
+    nac: 293          # example — pick your own; must match on both channels
+    netId: DEE00       # WACN
+    sysId: 123
+    rfssId: 1
+    siteId: 1
+  iden_table:
+    file: iden_table.dat
+```
+
+### Hotspot 1 — Control Channel (`/opt/dvm/cc/config.yml`)
+
+| Field | Value | Why |
+|-------|-------|-----|
+| `system.modem.protocol.uart.port` | `/dev/dvm-cc` | Talks to the CC board. |
+| `system.identity` / `cwId.callsign` | e.g. `N0CALL-CC` | Distinct CW/station ID. |
+| `system.config.channelId` / `channelNo` | `0` / `0` | 451.800 MHz (step 4). |
+| `system.config.authoritative` | `true` | This host handles channel grants. |
+| `protocols.p25.control.enable` | `true` | Turns this channel into a CC. |
+| `protocols.p25.control.dedicated` | `true` | Dedicated CC — signalling only, no voice. |
+| `protocols.p25.control.broadcast` | `true` | Actually transmit CC data. |
+| `network.rpcAddress` / `rpcPort` / `rpcPassword` | `127.0.0.1` / `9890` / *(pick a password)* | This host's own RPC listener — the VC will call into it. |
+| `system.config.voiceChNo` | one entry, see below | Tells the CC about its VC. |
+| `log.filePath` / `log.fileRoot` | e.g. `/opt/dvm/cc`, `DVMCC` | Keep logs separate. |
+
+```yaml
+system:
+  config:
+    voiceChNo:
+      - channelId: 1
+        channelNo: 0
+        rpcAddress: 127.0.0.1
+        rpcPort: 9891          # the VC's own rpcPort, from its config below
+        rpcPassword: "VC-RPC-PASSWORD"   # must match the VC's network.rpcPassword
+```
+
+### Hotspot 2 — Voice Channel (`/opt/dvm/vc/config.yml`)
+
+| Field | Value | Why |
+|-------|-------|-----|
+| `system.modem.protocol.uart.port` | `/dev/dvm-vc` | Talks to the VC board. |
+| `system.identity` / `cwId.callsign` | e.g. `N0CALL-VC` | Distinct CW/station ID. |
+| `system.config.channelId` / `channelNo` | `1` / `0` | 464.500 MHz (step 4). |
+| `system.config.authoritative` | `false` | The CC handles grants, not this host. |
+| `protocols.p25.control.enable` | `false` | This channel only carries voice. |
+| `network.rpcAddress` / `rpcPort` / `rpcPassword` | `127.0.0.1` / `9891` / `"VC-RPC-PASSWORD"` | This host's own RPC listener — referenced by the CC's `voiceChNo` entry above. |
+| `system.config.controlCh` | see below | Points this VC back at the CC. |
+| `log.filePath` / `log.fileRoot` | e.g. `/opt/dvm/vc`, `DVMVC` | Keep logs separate. |
+
+```yaml
+system:
+  config:
+    controlCh:
+      rpcAddress: 127.0.0.1
+      rpcPort: 9890            # the CC's own rpcPort, from its config above
+      rpcPassword: "ULTRA-VERY-SECURE-DEFAULT"   # must match the CC's network.rpcPassword
+      notifyEnable: true
+      presence: 120
+```
+
+```{note}
+The two `rpcPassword` pairs above are **local loopback secrets between your own two
+processes**, not something radios or a network ever see — pick anything, just make sure each
+side's value matches what the other side expects. This is the same CC↔VC RPC pattern used by
+[`config.example.yml`](https://github.com/DVMProject/dvmhost/blob/master/configs/config.example.yml)
+for a multi-host trunking site; see [`dvmhost`](../software/dvmhost/dvmhost.md#configuration-overview)
+for the full field reference, and
+[system-configs](../overview/system-configs.md)
+for the general pattern this quickstart is a worked example of.
+```
+
+Set `iAgreeNotToBeStupid: true` in both files.
 
 ## 6. Calibrate each independently
 
@@ -157,24 +256,25 @@ Run the [calibration procedure](../software/dvmhost/dvmhost.md#calibration) once
 pointed at its own config:
 
 ```bash
-/opt/dvm/bin/dvmhost -c /opt/dvm/hotspot1/config.yml --setup
-/opt/dvm/bin/dvmhost -c /opt/dvm/hotspot2/config.yml --setup
+/opt/dvm/bin/dvmhost -c /opt/dvm/cc/config.yml --setup
+/opt/dvm/bin/dvmhost -c /opt/dvm/vc/config.yml --setup
 ```
 
 Do this one at a time — running both boards' Tx simultaneously while you're trying to read a
-radio's BER on one of them will just confuse you.
+radio's BER on one of them will just confuse you. Calibrate the CC first, since you need it
+transmitting before a radio will show you anything on the VC at all.
 
 ## 7. Two systemd services
 
 ```{code-block} ini
-:caption: /etc/systemd/system/dvmhost-hotspot1.service
+:caption: /etc/systemd/system/dvmhost-cc.service
 
 [Unit]
-Description=DVM Host - Hotspot 1
+Description=DVM Host - P25 Control Channel (451.800 MHz)
 After=network.target
 
 [Service]
-ExecStart=/opt/dvm/bin/dvmhost -f -c /opt/dvm/hotspot1/config.yml
+ExecStart=/opt/dvm/bin/dvmhost -f -c /opt/dvm/cc/config.yml
 Restart=on-failure
 User=dvm
 
@@ -182,37 +282,44 @@ User=dvm
 WantedBy=multi-user.target
 ```
 
-Duplicate as `dvmhost-hotspot2.service` pointing at `hotspot2/config.yml`. Then:
+Duplicate as `dvmhost-vc.service` pointing at `/opt/dvm/vc/config.yml`. Start the **CC
+first**, then the VC:
 
 ```bash
 sudo useradd -r -s /usr/sbin/nologin dvm   # if you don't already run dvmhost as its own user
 sudo usermod -aG dialout dvm               # serial port access
 sudo systemctl daemon-reload
-sudo systemctl enable --now dvmhost-hotspot1 dvmhost-hotspot2
-journalctl -u dvmhost-hotspot1 -f          # watch one instance's log
+sudo systemctl enable --now dvmhost-cc
+sudo systemctl enable --now dvmhost-vc
+journalctl -u dvmhost-cc -f                # watch the CC's log
 ```
 
 ## 8. Standalone, or networked
 
-- **Standalone** — leave `network.enable: false` on both. Each hotspot works independently;
+- **Standalone** — leave `network.enable: false` on both. This one site works on its own;
   nothing more to do.
-- **Networked** — point both at the same or different [FNE](../software/dvmhost/dvmfne.md)
-  with their (already-unique) `network.id` peer IDs. This is also how you'd bridge the two
-  modes together operationally — e.g. patch a DMR talkgroup to a P25 talkgroup via
-  `talkgroup_rules.yml` rewrites, or [`dvmpatch`](../software/dvmhost/supplementary.md).
+- **Networked** — point both at an [FNE](../software/dvmhost/dvmfne.md) with unique
+  `network.id` peer IDs, so this site can be one of several sites in a wider trunked network
+  (adjacent-site broadcasts, roaming, etc. — see [FNE Networking](networking.md)).
 
 ## Verify
 
-- `systemctl status dvmhost-hotspot1 dvmhost-hotspot2` — both `active (running)`.
-- Each board's LED behaves as expected on Tx/Rx.
-- Bring up a radio on each channel and confirm two-way digital audio.
+- `systemctl status dvmhost-cc dvmhost-vc` — both `active (running)`.
+- The CC board should be transmitting continuously (or on its configured broadcast interval)
+  — check its Tx LED and the CC's log for TSBK activity.
+- A P25 radio programmed for WACN `DEE00`, System ID `123`, and the CC frequency (451.800 MHz)
+  should show it's registered/affiliated on the system.
+- Key up: the radio should be granted to 464.500 MHz for the call, and the VC's log should
+  show the grant and the call.
 - If networked, confirm both peers show connected on the FNE
   ([`sysview`](../software/dvmhost/supplementary.md) or the REST API).
 
 ## Source / further reading
 
 - [Installation](../software/dvmhost/installation.md), [`dvmhost`](../software/dvmhost/dvmhost.md) configuration & calibration
+- [Basic P25 trunking site](../overview/system-configs.md) — the general pattern
 - [`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md)
 - [Channel Identity Tables](iden-tables.md)
 - [FNE Networking & Topology](networking.md)
-- [Troubleshooting](troubleshooting.md) if a board won't enumerate or calibration won't settle
+- [Troubleshooting](troubleshooting.md) if a board won't enumerate, calibration won't settle,
+  or grants aren't happening
