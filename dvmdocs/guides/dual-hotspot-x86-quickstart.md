@@ -2,40 +2,39 @@
 
 ```{warning}
 **Work in progress.** This guide has not yet been run end-to-end or verified against real
-hardware — in particular the USB bootloader-flashing steps (BOOT0 jumper location, exact
-`stm32flash` invocation) are inferred from the same mechanism used elsewhere in these docs,
-not confirmed on hardware, and the trunking RPC wiring has not been tested on an actual
-simplex-hotspot pair. Treat it as a starting point, cross-check against your board's own
-documentation and the [P25 trunking reference](../overview/system-configs.md),
-and see something wrong? Fix it — see [Contributing](../contributing.md).
+hardware. The `dvmfirmware-hs` branch/target/binary-name details below have been checked
+directly against the repository's `Makefile.STM32FX` on both `master` and `usb-support`; the
+BOOT0 jumper location, exact `stm32flash` behavior, and the CC↔VC RPC wiring have not been
+confirmed on physical boards. Treat it as a starting point, cross-check against your board's
+own documentation and the
+[P25 trunking reference](../overview/system-configs.md), and see something wrong? Fix it —
+see [Contributing](../contributing.md).
 ```
 
 This is an end-to-end path from a bare x86/x86_64 Linux box to a single machine running a
-**minimal one-site P25 trunked system**: two USB hotspot boards on one PC, one dedicated to
-the **control channel (CC)** and one dedicated to a **voice channel (VC)**. It's a cheap way to
-stand up and learn trunking without a repeater or a second computer — one reasonably modern PC
-easily has the cores for two `dvmhost` instances.
+**minimal one-site P25 trunked system**: two **`MMDVM_HS_Dual`** duplex hotspot boards
+connected over USB to one PC, one dedicated to the **control channel (CC)** and one dedicated
+to a **voice channel (VC)**. It's a cheap way to stand up and learn real trunking — with an
+actual duplex control channel, not a simplex approximation of one — without a repeater or a
+second computer. One reasonably modern PC easily has the cores for two `dvmhost` instances.
 
 ```{note}
-"Dual hotspot" here means **two separate boards, two separate `dvmhost` instances**, one CC and
-one VC, coordinating over a local RPC link. If you instead have a single physical board with
-two ADF7021 chips on it for full-duplex operation (e.g. an `MMDVM_HS_Dual_Hat`-style board),
-that's one *duplex* hotspot, normally wired to a Raspberry Pi's GPIO rather than USB — see
-[`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md) instead.
-
-Hotspot boards are typically low-power **simplex** boards (one frequency, shared Tx/Rx). A
-real trunking site normally wants duplex (repeater) hardware so the CC can transmit and
-receive at the same time. This guide's CC and VC each sit on their own simplex frequency
-instead, which is a fine way to *learn and test* trunking behavior, but treat it as a lab
-setup, not a production site.
+`MMDVM_HS_Dual` boards carry **two ADF7021 chips** — one dedicated to Rx, one to Tx — giving
+true full-duplex operation, unlike single-chip simplex hotspots. That's exactly what a
+dedicated control channel needs: it must keep transmitting control data continuously while
+simultaneously receiving registration and grant requests. These boards are more commonly sold
+as Raspberry Pi GPIO hats, but the same hardware/firmware target also runs over USB — see the
+firmware note in step 3.
 ```
 
 ## The example system
 
-| | Frequency | Role |
-|---|---|---|
-| Hotspot 1 | **451.800 MHz** | Control Channel (CC) — dedicated |
-| Hotspot 2 | **464.500 MHz** | Voice Channel (VC) |
+| | Output (radio Rx) | Input (radio Tx) | Role |
+|---|---|---|---|
+| Hotspot 1 | **451.800 MHz** | **456.800 MHz** | Control Channel (CC) — dedicated, duplex |
+| Hotspot 2 | **464.500 MHz** | **469.500 MHz** | Voice Channel (VC) — duplex |
+
+Both pairs are a standard +5 MHz UHF duplex split.
 
 | Parameter | Value |
 |---|---|
@@ -49,10 +48,10 @@ setup, not a production site.
 
 - One x86/x86_64 PC (Debian/Ubuntu-family recommended) running Linux
 - A single `dvmhost` build, used by two systemd services with two config files
-- Two USB-connected ADF7021 hotspot boards, each flashed with
+- Two USB-connected `MMDVM_HS_Dual` boards, each flashed with the `usb-support` branch of
   [`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md)
-- A working one-site P25 trunked system: radios register on the CC (451.800 MHz) and get
-  granted to the VC (464.500 MHz) for calls
+- A working one-site duplex P25 trunked system: radios register on the CC (451.800/456.800
+  MHz) and get granted to the VC (464.500/469.500 MHz) for calls
 - Standalone, or linked to an [FNE](../software/dvmhost/dvmfne.md) for a wider network
 
 ## 1. Prep the PC
@@ -91,6 +90,38 @@ Reload with `sudo udevadm control --reload && sudo udevadm trigger`, then confir
 `/dev/dvm-cc` and `/dev/dvm-vc` exist. Use these symlinks — not `/dev/ttyUSBx` — in both
 config files below.
 
+:::{note}
+**CH340/CH341 boards usually have no usable serial number.** The `grep -m1 serial` above walks
+up the device tree and will happily match the first `ATTRS{serial}` it finds — but on CH340
+clones (`idVendor=="1a86"`, `idProduct=="7523"`, driver `ch341-uart`) that's typically the
+*PCI host controller's* serial (e.g. `0000:00:14.0`), not a per-board ID, and it comes back
+identical for every board on the same controller. If both of your `grep` commands return the
+same value, you have this case — the serial-based rule above won't work.
+
+Key the rule on USB port path instead:
+
+```bash
+# get each board's port path
+udevadm info -a -n /dev/ttyUSB0 | grep -m1 'KERNELS=="[0-9]'
+udevadm info -a -n /dev/ttyUSB1 | grep -m1 'KERNELS=="[0-9]'
+```
+
+```{code-block} text
+:caption: /etc/udev/rules.d/99-dvm-hotspots.rules
+
+SUBSYSTEM=="tty", KERNELS=="1-1", SYMLINK+="dvm-cc"
+SUBSYSTEM=="tty", KERNELS=="1-2", SYMLINK+="dvm-vc"
+```
+
+(Substitute the actual `KERNELS` values from your `udevadm` output — the port path, not
+literally `1-1`/`1-2`.) Reload the same way. This ties the symlink to the physical USB port
+rather than the board itself, so if you later swap which port a board is plugged into, the
+symlinks swap with it — fine as long as you don't move the cables. `/dev/serial/by-path/` is
+often already populated with equivalent stable names by systemd-udevd; check
+`ls -la /dev/serial/by-path/` before writing a custom rule, since it may already give you what
+you need.
+:::
+
 ## 2. Build `dvmhost` once
 
 One binary serves both instances.
@@ -101,7 +132,16 @@ cd dvmhost && mkdir build && cd build
 cmake ..
 make
 make strip
+make tarball
 sudo tar xvzf dvmhost_R04Gxx_<arch>.tar.gz -C /opt
+```
+
+```{note}
+`make tarball` is the step that actually produces the `dvmhost_R04Gxx_<arch>.tar.gz` file —
+it's easy to miss since `make strip` looks like the last build step. `<arch>` in the filename
+isn't a placeholder to fill in; it's whatever CMake names it for your platform. Run
+`ls *.tar.gz` in the build directory after `make tarball` to get the exact filename before
+extracting.
 ```
 
 See [Installation](../software/dvmhost/installation.md) for the full flag reference if you
@@ -109,42 +149,70 @@ need cross-compilation (not needed here — you're building natively for x86_64)
 
 ## 3. Flash both boards
 
-Build [`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md) once, then flash each
-board over its USB-serial port using the STM32 UART bootloader — the same mechanism used for
-[DVM-V24](../hardware/dvm-v24.md), just via a plain USB-serial hotspot board instead of a
-dedicated adapter:
+```bash
+git clone --recurse-submodules -b usb-support https://github.com/DVMProject/dvmfirmware-hs.git
+cd dvmfirmware-hs
+make -f Makefile.STM32FX mmdvm-hs-hat-dual
+```
+
+:::{note}
+**Use the `usb-support` branch, not `master`, for USB-connected boards.** Confirmed directly
+against both branches' `Makefile.STM32FX`: `master` only wires up GPIO/hat targets
+(`mmdvm-hs-hat`, `mmdvm-hs-hat-dual`, `zumspot-adf7021`, `pihat-7021-r2`) under
+`-DSTM32_USART1_HOST` — it references USB source files but never compiles them into any
+target. `usb-support` carries the same board targets (minus `pihat-7021-r2`) plus
+`lonestar-usb`, all rebuilt under `-DSTM32_USB_HOST` instead. That flag is the actual
+USB-vs-GPIO switch, applied branch-wide to every target — it isn't tied to one board profile.
+
+**The target is picked by your physical ADF7021 hardware, not by "USB vs GPIO."** For a
+`MMDVM_HS_Dual`-style board — two ADF7021 chips, full duplex — the target is
+`mmdvm-hs-hat-dual` whether you run it over its GPIO header or, as here, over USB. (For
+reference: a single-ADF7021 board with no vendor-specific profile is `zumspot-adf7021`; a
+single-ADF7021 `MMDVM_HS_Hat`-style board is `mmdvm-hs-hat`; a bare USB dongle with no
+hat/GPIO form factor at all, e.g. a LoneStar USB stick, is `lonestar-usb`.)
+
+Confirm against the actual target list on `usb-support` before building — it's a fast check
+and cheaper than a wrong build:
 
 ```bash
-git clone --recurse-submodules https://github.com/DVMProject/dvmfirmware-hs.git
-cd dvmfirmware-hs
-make -f Makefile.STM32FX <your-board-type>
+grep -E '^[a-z0-9_-]+:' Makefile.STM32FX
 ```
+
+**The output binary is also different on this branch.** Every target on `usb-support` routes
+through a bootloader-enabled build (`bl` → `release_f1bl`), producing
+`dvm-firmware-hs_f1bl.bin` — not `dvm-firmware-hs_f1.bin`, which is what `master`'s plain `hs`
+build produces. Use the `_f1bl` filename below; confirm with `ls *.bin` in the build directory
+if in doubt.
+:::
+
+Both boards are the same `MMDVM_HS_Dual` type, so build once and flash it to both:
 
 1. Put the board in bootloader mode — jumper **BOOT0** (sometimes labeled **J1**) per your
    board's documentation; boards vary here, so check the seller's instructions.
 2. Flash over its stable serial device:
    ```bash
-   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/dvm-cc
-   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/dvm-vc
+   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/dvm-cc
+   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/dvm-vc
    ```
 3. Remove the boot jumper and power-cycle (or `-R` above already resets it).
 
 ## 4. Build the `iden_table.dat`
 
-Both instances share one `iden_table.dat` — a row per channel, each anchored directly on its
-operating frequency (no repeater offset needed since these are simplex boards). See the
-[Channel Identity Tables guide](iden-tables.md) for the general math.
+Both instances share one `iden_table.dat`. Because these are true duplex boards, each channel
+needs a real **Tx/Rx split**, not a single simplex frequency — that's what `Input Offset` is
+for. See the [Channel Identity Tables guide](iden-tables.md) for the general math (base
+frequency = radio Rx / site Tx; base + offset = radio Tx / site Rx).
 
 ```{code-block} text
 :caption: iden_table.dat
 
 # ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
-0,451800000,12.5,0.000,12.5,
-1,464500000,12.5,0.000,12.5,
+0,451800000,12.5,5.000,12.5,
+1,464500000,12.5,5.000,12.5,
 ```
 
-- **CC** (Hotspot 1): `channelId: 0`, `channelNo: 0` → 451.800000 MHz
-- **VC** (Hotspot 2): `channelId: 1`, `channelNo: 0` → 464.500000 MHz
+- **CC** (Hotspot 1): `channelId: 0`, `channelNo: 0` → 451.800000 / 456.800000 MHz
+- **VC** (Hotspot 2): `channelId: 1`, `channelNo: 0` → 464.500000 / 469.500000 MHz
 
 Copy the same `iden_table.dat` to both instances' config directories.
 
@@ -160,8 +228,8 @@ sudo cp /opt/dvm/configs/iden_table.example.dat /opt/dvm/cc/iden_table.dat
 sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
 ```
 
-Both hosts run **P25 only**, simplex, sharing the same site identity — only the channel and
-CC/VC-specific fields differ.
+Both hosts run **P25 only**, full duplex, sharing the same site identity — only the channel
+and CC/VC-specific fields differ.
 
 ### Common to both `config.yml`
 
@@ -175,8 +243,7 @@ protocols:
     enable: false
 
 system:
-  duplex: false
-  simplexSameFrequency: true
+  duplex: true
   config:
     nac: 293          # example — pick your own; must match on both channels
     netId: DEE00       # WACN
@@ -193,7 +260,7 @@ system:
 |-------|-------|-----|
 | `system.modem.protocol.uart.port` | `/dev/dvm-cc` | Talks to the CC board. |
 | `system.identity` / `cwId.callsign` | e.g. `N0CALL-CC` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `0` / `0` | 451.800 MHz (step 4). |
+| `system.config.channelId` / `channelNo` | `0` / `0` | 451.800/456.800 MHz (step 4). |
 | `system.config.authoritative` | `true` | This host handles channel grants. |
 | `protocols.p25.control.enable` | `true` | Turns this channel into a CC. |
 | `protocols.p25.control.dedicated` | `true` | Dedicated CC — signalling only, no voice. |
@@ -219,7 +286,7 @@ system:
 |-------|-------|-----|
 | `system.modem.protocol.uart.port` | `/dev/dvm-vc` | Talks to the VC board. |
 | `system.identity` / `cwId.callsign` | e.g. `N0CALL-VC` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `1` / `0` | 464.500 MHz (step 4). |
+| `system.config.channelId` / `channelNo` | `1` / `0` | 464.500/469.500 MHz (step 4). |
 | `system.config.authoritative` | `false` | The CC handles grants, not this host. |
 | `protocols.p25.control.enable` | `false` | This channel only carries voice. |
 | `network.rpcAddress` / `rpcPort` / `rpcPassword` | `127.0.0.1` / `9891` / `"VC-RPC-PASSWORD"` | This host's own RPC listener — referenced by the CC's `voiceChNo` entry above. |
@@ -243,9 +310,8 @@ processes**, not something radios or a network ever see — pick anything, just 
 side's value matches what the other side expects. This is the same CC↔VC RPC pattern used by
 [`config.example.yml`](https://github.com/DVMProject/dvmhost/blob/master/configs/config.example.yml)
 for a multi-host trunking site; see [`dvmhost`](../software/dvmhost/dvmhost.md#configuration-overview)
-for the full field reference, and
-[system-configs](../overview/system-configs.md)
-for the general pattern this quickstart is a worked example of.
+for the full field reference, and [system-configs](../overview/system-configs.md) for the
+general pattern this quickstart is a worked example of.
 ```
 
 Set `iAgreeNotToBeStupid: true` in both files.
@@ -253,7 +319,8 @@ Set `iAgreeNotToBeStupid: true` in both files.
 ## 6. Calibrate each independently
 
 Run the [calibration procedure](../software/dvmhost/dvmhost.md#calibration) once per instance,
-pointed at its own config:
+pointed at its own config. Since these are duplex boards, calibrate **both** Tx and Rx per
+instance — there's no simplex shortcut here.
 
 ```bash
 /opt/dvm/bin/dvmhost -c /opt/dvm/cc/config.yml --setup
@@ -270,7 +337,7 @@ transmitting before a radio will show you anything on the VC at all.
 :caption: /etc/systemd/system/dvmhost-cc.service
 
 [Unit]
-Description=DVM Host - P25 Control Channel (451.800 MHz)
+Description=DVM Host - P25 Control Channel (451.800/456.800 MHz)
 After=network.target
 
 [Service]
@@ -306,11 +373,11 @@ journalctl -u dvmhost-cc -f                # watch the CC's log
 
 - `systemctl status dvmhost-cc dvmhost-vc` — both `active (running)`.
 - The CC board should be transmitting continuously (or on its configured broadcast interval)
-  — check its Tx LED and the CC's log for TSBK activity.
-- A P25 radio programmed for WACN `DEE00`, System ID `123`, and the CC frequency (451.800 MHz)
-  should show it's registered/affiliated on the system.
-- Key up: the radio should be granted to 464.500 MHz for the call, and the VC's log should
-  show the grant and the call.
+  on 451.800 MHz — check its Tx LED and the CC's log for TSBK activity.
+- A P25 radio programmed for WACN `DEE00`, System ID `123`, output 451.800 MHz / input
+  456.800 MHz should show it's registered/affiliated on the system.
+- Key up: the radio should be granted to 464.500/469.500 MHz for the call, and the VC's log
+  should show the grant and the call.
 - If networked, confirm both peers show connected on the FNE
   ([`sysview`](../software/dvmhost/supplementary.md) or the REST API).
 
