@@ -247,98 +247,571 @@ sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
 
 ## 5. Two configs, one trunked site
 
-```bash
-sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/cc/config.yml
-sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/vc/config.yml
-```
+Both hosts run **P25 only**, full duplex, sharing the same site identity — the two configs
+below are [`config.example.yml`](https://github.com/DVMProject/dvmhost/blob/master/configs/config.example.yml)
+with comments stripped, values set for this site, and the CC/VC-specific fields (in
+**bold** below) differing between them. Write each one directly:
 
-Both hosts run **P25 only**, full duplex, sharing the same site identity — only the channel
-and CC/VC-specific fields differ.
-
-### Common to both `config.yml`
-
-```yaml
-protocols:
-  p25:
-    enable: true
-  dmr:
-    enable: false
-  nxdn:
-    enable: false
-
-system:
-  duplex: true
-  config:
-    nac: 293          # example — pick your own; must match on both channels
-    netId: DEE00       # WACN
-    sysId: 123
-    rfssId: 1
-    siteId: 1
-  iden_table:
-    file: iden_table.dat
+```{note}
+The two `rpcPassword` values (`CC-RPC-PASSWORD` / `VC-RPC-PASSWORD`) are **local loopback
+secrets between your own two processes**, not something radios or a network ever see — change
+them to anything, just keep each side's value matching what the other side expects (the CC's
+`voiceChNo[].rpcPassword` must equal the VC's `network.rpcPassword`, and the VC's
+`controlCh.rpcPassword` must equal the CC's `network.rpcPassword`). This is the same CC↔VC RPC
+pattern documented in [`dvmhost`](../software/dvmhost/dvmhost.md#configuration-overview) and
+[system-configs](../overview/system-configs.md).
 ```
 
 ### Hotspot 1 — Control Channel (`/opt/dvm/cc/config.yml`)
 
-| Field | Value | Why |
-|-------|-------|-----|
-| `system.modem.protocol.uart.port` | `/dev/dvm-cc` | Talks to the CC board. |
-| `system.identity` / `cwId.callsign` | e.g. `N0CALL-CC` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `0` / `288` | 451.800/456.800 MHz (step 4). |
-| `system.config.authoritative` | `true` | This host handles channel grants. |
-| `protocols.p25.control.enable` | `true` | Turns this channel into a CC. |
-| `protocols.p25.control.dedicated` | `true` | Dedicated CC — signalling only, no voice. |
-| `protocols.p25.control.broadcast` | `true` | Actually transmit CC data. |
-| `network.rpcAddress` / `rpcPort` / `rpcPassword` | `127.0.0.1` / `9890` / *(pick a password)* | This host's own RPC listener — the VC will call into it. |
-| `system.config.voiceChNo` | one entry, see below | Tells the CC about its VC. |
-| `log.filePath` / `log.fileRoot` | e.g. `/opt/dvm/cc`, `DVMCC` | Keep logs separate. |
+Differs from the VC below in: `log` paths, `network.rpcPort`/`rpcPassword`,
+**`protocols.p25.control`** (this is what makes it a CC), **`system.config.channelNo` (288)**,
+**`authoritative: true`**, the **`voiceChNo`** entry pointing at the VC, `system.identity` /
+`cwId.callsign`, and `modem.protocol.uart.port`.
 
-```yaml
+```bash
+sudo tee /opt/dvm/cc/config.yml > /dev/null <<'EOF'
+daemon: true
+iAgreeNotToBeStupid: true
+log:
+    disableNonAuthoritiveLogging: false
+    displayLevel: 1
+    fileLevel: 1
+    useSyslog: false
+    filePath: /opt/dvm/cc
+    activityFilePath: /opt/dvm/cc
+    fileRoot: DVMCC
+network:
+    enable: false
+    id: 100001
+    address: 127.0.0.1
+    port: 62031
+    password: "PASSWORD"
+    encrypted: false
+    presharedKey: "000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F"
+    jitter: 360
+    slot1: true
+    slot2: true
+    updateLookups: false
+    saveLookups: false
+    allowActivityTransfer: true
+    allowDiagnosticTransfer: true
+    allowStatusTransfer: true
+    packetDump: false
+    debug: false
+    rpcAddress: 127.0.0.1
+    rpcPort: 9890
+    rpcPassword: "CC-RPC-PASSWORD"
+    rpcDebug: false
+    restEnable: false
+    restAddress: 127.0.0.1
+    restPort: 9990
+    restSsl: false
+    restSslCertificate: web.crt
+    restSslKey: web.key
+    restPassword: "PASSWORD"
+    restDebug: false
+protocols:
+    dmr:
+        enable: false
+        beacons:
+            enable: false
+            interval: 60
+            duration: 3
+        control:
+            dedicated: false
+            enable: false
+            slot: 1
+            disableGrantSourceIdCheck: false
+        disableNetworkGrant: false
+        ignoreAffiliationCheck: false
+        convNetGrantDemand: false
+        legacyGroupReg: false
+        embeddedLCOnly: false
+        dumpTAData: true
+        dumpDataPacket: false
+        repeatDataPacket: true
+        dumpCsbkData: false
+        verifyReg: false
+        disableUnitRegTimeout: false
+        nRandWait: 8
+        backOff: 1
+        callHang: 5
+        txHang: 8
+        silenceThreshold: 21
+        frameLossThreshold: 2
+        queueSize: 31
+        verbose: true
+        debug: false
+    p25:
+        enable: true
+        tduPreambleCount: 6
+        control:
+            enable: true
+            ackRequests: true
+            dedicated: true
+            broadcast: true
+            interval: 300
+            duration: 1
+            notifyActiveTG: false
+            disableTSDUMBF: false
+            enableTimeDateAnn: false
+            disableGrantSourceIdCheck: false
+            disableAdjSiteBroadcast: false
+            explicitTDUGrantRelease: true
+            redundantImmediate: true
+            redundantGrantTransmit: false
+        controlOnly: false
+        disableNetworkHDU: false
+        disableNetworkGrant: false
+        forceAllowTG0: false
+        ignoreAffiliationCheck: false
+        immediateCallTerm: true
+        inhibitUnauthorized: false
+        legacyGroupGrnt: true
+        legacyGroupReg: false
+        convNetGrantDemand: false
+        demandUnitRegForRefusedAff: true
+        verifyAff: false
+        verifyReg: false
+        disableUnitRegTimeout: false
+        requireLLAForReg: false
+        dumpDataPacket: false
+        repeatDataPacket: true
+        ignoreDataCRC: false
+        dumpTsbkData: false
+        callHang: 5
+        noStatusAck: false
+        noMessageAck: true
+        unitToUnitAvailCheck: false
+        allowExplicitSourceId: false
+        disableDenyResponse: false
+        sndcpSupport: false
+        silenceThreshold: 124
+        frameLossThreshold: 6
+        queueSize: 12
+        verbose: true
+        debug: false
+    nxdn:
+        enable: false
+        control:
+            enable: false
+            dedicated: false
+            broadcast: true
+            interval: 300
+            duration: 1
+            disableGrantSourceIdCheck: false
+        ignoreAffiliationCheck: false
+        legacyGroupReg: false
+        verifyAff: false
+        verifyReg: false
+        disableUnitRegTimeout: false
+        dumpRcchData: false
+        callHang: 5
+        silenceThreshold: 14
+        frameLossThreshold: 4
+        queueSize: 31
+        verbose: true
+        debug: false
 system:
-  config:
-    voiceChNo:
-      - channelId: 0
-        channelNo: 2320
-        rpcAddress: 127.0.0.1
-        rpcPort: 9891          # the VC's own rpcPort, from its config below
-        rpcPassword: "VC-RPC-PASSWORD"   # must match the VC's network.rpcPassword
+    identity: N0CALL-CC
+    timeout: 180
+    duplex: true
+    simplexSameFrequency: false
+    modeHang: 10
+    fixedMode: false
+    rfTalkgroupHang: 10
+    activeTickDelay: 5
+    idleTickDelay: 5
+    localTimeOffset: 0
+    disableWatchdogOverflow: false
+    info:
+        latitude: 0.0
+        longitude: 0.0
+        height: 1
+        power: 10
+        location: "Example Site"
+    config:
+        authoritative: true
+        supervisor: false
+        channelId: 0
+        channelNo: 288
+        controlCh:
+            rpcAddress: 127.0.0.1
+            rpcPort: 0
+            rpcPassword: "ULTRA-VERY-SECURE-DEFAULT"
+            notifyEnable: true
+            presence: 120
+        voiceChNo:
+            - channelId: 0
+              channelNo: 2320
+              rpcAddress: 127.0.0.1
+              rpcPort: 9891
+              rpcPassword: "VC-RPC-PASSWORD"
+        secure:
+            key: "000102030405060708090A0B0C0D0E0F"
+        colorCode: 1
+        nac: 293
+        ran: 1
+        pSuperGroup: FFFE
+        announcementGroup: FFFE
+        defaultNetIdleTalkgroup: 0
+        dmrNetId: 1
+        netId: DEE00
+        sysId: 123
+        rfssId: 1
+        siteId: 1
+    cwId:
+        enable: true
+        time: 15
+        callsign: N0CALL-CC
+    modem:
+        protocol:
+            type: "uart"
+            mode: "air"
+            uart:
+                port: /dev/dvm-cc
+                speed: 115200
+        rxInvert: false
+        txInvert: false
+        pttInvert: false
+        dcBlocker: true
+        cosLockout: false
+        fdmaPreamble: 80
+        dmrRxDelay: 7
+        p25CorrCount: 2
+        dmrFifoLength: 560
+        p25FifoLength: 522
+        nxdnFifoLength: 538
+        hotspot:
+            dmrDiscBWAdj: 0
+            dmrPostBWAdj: 0
+            p25DiscBWAdj: 0
+            p25PostBWAdj: 0
+            nxdnDiscBWAdj: 0
+            nxdnPostBWAdj: 0
+            adfGainMode: 2
+            afcEnable: true
+            afcKI: 13
+            afcKP: 5
+            afcRange: 1
+            txTuning: 0
+            rxTuning: 0
+        repeater:
+            dmrSymLvl3Adj: 0
+            dmrSymLvl1Adj: 0
+            p25SymLvl3Adj: 0
+            p25SymLvl1Adj: 0
+            nxdnSymLvl3Adj: 0
+            nxdnSymLvl1Adj: 0
+        softpot:
+            rxCoarse: 127
+            rxFine: 127
+            txCoarse: 127
+            txFine: 127
+            rssiCoarse: 127
+            rssiFine: 127
+        rxDCOffset: 0
+        txDCOffset: 0
+        rxLevel: 50
+        txLevel: 50
+        rssiMappingFile: RSSI.dat
+        packetPlayoutTime: 10
+        disableOFlowReset: false
+        ignoreModemConfigArea: false
+        dumpModemStatus: false
+        displayModemDebugMessages: false
+        trace: false
+        debug: false
+    iden_table:
+        file: iden_table.dat
+        time: 30
+    radio_id:
+        file: rid_acl.dat
+        time: 2
+        acl: false
+    talkgroup_id:
+        file: talkgroup_rules.yml
+        time: 2
+        acl: false
+EOF
 ```
 
 ### Hotspot 2 — Voice Channel (`/opt/dvm/vc/config.yml`)
 
-| Field | Value | Why |
-|-------|-------|-----|
-| `system.modem.protocol.uart.port` | `/dev/dvm-vc` | Talks to the VC board. |
-| `system.identity` / `cwId.callsign` | e.g. `N0CALL-VC` | Distinct CW/station ID. |
-| `system.config.channelId` / `channelNo` | `0` / `2320` | 464.500/469.500 MHz (step 4). |
-| `system.config.authoritative` | `false` | The CC handles grants, not this host. |
-| `protocols.p25.control.enable` | `false` | This channel only carries voice. |
-| `network.rpcAddress` / `rpcPort` / `rpcPassword` | `127.0.0.1` / `9891` / `"VC-RPC-PASSWORD"` | This host's own RPC listener — referenced by the CC's `voiceChNo` entry above. |
-| `system.config.controlCh` | see below | Points this VC back at the CC. |
-| `log.filePath` / `log.fileRoot` | e.g. `/opt/dvm/vc`, `DVMVC` | Keep logs separate. |
+Differs from the CC above in: `log` paths, `network.rpcPort`/`rpcPassword`,
+**`protocols.p25.control.enable: false`** (this host doesn't run a control channel),
+**`system.config.channelNo` (2320)**, **`authoritative: false`**, the **`controlCh`** entry
+pointing at the CC (with an empty `voiceChNo` — the VC doesn't grant channels), `system.identity`
+/ `cwId.callsign`, and `modem.protocol.uart.port`.
 
-```yaml
+```bash
+sudo tee /opt/dvm/vc/config.yml > /dev/null <<'EOF'
+daemon: true
+iAgreeNotToBeStupid: true
+log:
+    disableNonAuthoritiveLogging: false
+    displayLevel: 1
+    fileLevel: 1
+    useSyslog: false
+    filePath: /opt/dvm/vc
+    activityFilePath: /opt/dvm/vc
+    fileRoot: DVMVC
+network:
+    enable: false
+    id: 100002
+    address: 127.0.0.1
+    port: 62031
+    password: "PASSWORD"
+    encrypted: false
+    presharedKey: "000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F"
+    jitter: 360
+    slot1: true
+    slot2: true
+    updateLookups: false
+    saveLookups: false
+    allowActivityTransfer: true
+    allowDiagnosticTransfer: true
+    allowStatusTransfer: true
+    packetDump: false
+    debug: false
+    rpcAddress: 127.0.0.1
+    rpcPort: 9891
+    rpcPassword: "VC-RPC-PASSWORD"
+    rpcDebug: false
+    restEnable: false
+    restAddress: 127.0.0.1
+    restPort: 9991
+    restSsl: false
+    restSslCertificate: web.crt
+    restSslKey: web.key
+    restPassword: "PASSWORD"
+    restDebug: false
+protocols:
+    dmr:
+        enable: false
+        beacons:
+            enable: false
+            interval: 60
+            duration: 3
+        control:
+            dedicated: false
+            enable: false
+            slot: 1
+            disableGrantSourceIdCheck: false
+        disableNetworkGrant: false
+        ignoreAffiliationCheck: false
+        convNetGrantDemand: false
+        legacyGroupReg: false
+        embeddedLCOnly: false
+        dumpTAData: true
+        dumpDataPacket: false
+        repeatDataPacket: true
+        dumpCsbkData: false
+        verifyReg: false
+        disableUnitRegTimeout: false
+        nRandWait: 8
+        backOff: 1
+        callHang: 5
+        txHang: 8
+        silenceThreshold: 21
+        frameLossThreshold: 2
+        queueSize: 31
+        verbose: true
+        debug: false
+    p25:
+        enable: true
+        tduPreambleCount: 6
+        control:
+            enable: false
+            ackRequests: true
+            dedicated: false
+            broadcast: true
+            interval: 300
+            duration: 1
+            notifyActiveTG: false
+            disableTSDUMBF: false
+            enableTimeDateAnn: false
+            disableGrantSourceIdCheck: false
+            disableAdjSiteBroadcast: false
+            explicitTDUGrantRelease: true
+            redundantImmediate: true
+            redundantGrantTransmit: false
+        controlOnly: false
+        disableNetworkHDU: false
+        disableNetworkGrant: false
+        forceAllowTG0: false
+        ignoreAffiliationCheck: false
+        immediateCallTerm: true
+        inhibitUnauthorized: false
+        legacyGroupGrnt: true
+        legacyGroupReg: false
+        convNetGrantDemand: false
+        demandUnitRegForRefusedAff: true
+        verifyAff: false
+        verifyReg: false
+        disableUnitRegTimeout: false
+        requireLLAForReg: false
+        dumpDataPacket: false
+        repeatDataPacket: true
+        ignoreDataCRC: false
+        dumpTsbkData: false
+        callHang: 5
+        noStatusAck: false
+        noMessageAck: true
+        unitToUnitAvailCheck: false
+        allowExplicitSourceId: false
+        disableDenyResponse: false
+        sndcpSupport: false
+        silenceThreshold: 124
+        frameLossThreshold: 6
+        queueSize: 12
+        verbose: true
+        debug: false
+    nxdn:
+        enable: false
+        control:
+            enable: false
+            dedicated: false
+            broadcast: true
+            interval: 300
+            duration: 1
+            disableGrantSourceIdCheck: false
+        ignoreAffiliationCheck: false
+        legacyGroupReg: false
+        verifyAff: false
+        verifyReg: false
+        disableUnitRegTimeout: false
+        dumpRcchData: false
+        callHang: 5
+        silenceThreshold: 14
+        frameLossThreshold: 4
+        queueSize: 31
+        verbose: true
+        debug: false
 system:
-  config:
-    controlCh:
-      rpcAddress: 127.0.0.1
-      rpcPort: 9890            # the CC's own rpcPort, from its config above
-      rpcPassword: "ULTRA-VERY-SECURE-DEFAULT"   # must match the CC's network.rpcPassword
-      notifyEnable: true
-      presence: 120
+    identity: N0CALL-VC
+    timeout: 180
+    duplex: true
+    simplexSameFrequency: false
+    modeHang: 10
+    fixedMode: false
+    rfTalkgroupHang: 10
+    activeTickDelay: 5
+    idleTickDelay: 5
+    localTimeOffset: 0
+    disableWatchdogOverflow: false
+    info:
+        latitude: 0.0
+        longitude: 0.0
+        height: 1
+        power: 10
+        location: "Example Site"
+    config:
+        authoritative: false
+        supervisor: false
+        channelId: 0
+        channelNo: 2320
+        controlCh:
+            rpcAddress: 127.0.0.1
+            rpcPort: 9890
+            rpcPassword: "CC-RPC-PASSWORD"
+            notifyEnable: true
+            presence: 120
+        voiceChNo: []
+        secure:
+            key: "000102030405060708090A0B0C0D0E0F"
+        colorCode: 1
+        nac: 293
+        ran: 1
+        pSuperGroup: FFFE
+        announcementGroup: FFFE
+        defaultNetIdleTalkgroup: 0
+        dmrNetId: 1
+        netId: DEE00
+        sysId: 123
+        rfssId: 1
+        siteId: 1
+    cwId:
+        enable: true
+        time: 15
+        callsign: N0CALL-VC
+    modem:
+        protocol:
+            type: "uart"
+            mode: "air"
+            uart:
+                port: /dev/dvm-vc
+                speed: 115200
+        rxInvert: false
+        txInvert: false
+        pttInvert: false
+        dcBlocker: true
+        cosLockout: false
+        fdmaPreamble: 80
+        dmrRxDelay: 7
+        p25CorrCount: 2
+        dmrFifoLength: 560
+        p25FifoLength: 522
+        nxdnFifoLength: 538
+        hotspot:
+            dmrDiscBWAdj: 0
+            dmrPostBWAdj: 0
+            p25DiscBWAdj: 0
+            p25PostBWAdj: 0
+            nxdnDiscBWAdj: 0
+            nxdnPostBWAdj: 0
+            adfGainMode: 2
+            afcEnable: true
+            afcKI: 13
+            afcKP: 5
+            afcRange: 1
+            txTuning: 0
+            rxTuning: 0
+        repeater:
+            dmrSymLvl3Adj: 0
+            dmrSymLvl1Adj: 0
+            p25SymLvl3Adj: 0
+            p25SymLvl1Adj: 0
+            nxdnSymLvl3Adj: 0
+            nxdnSymLvl1Adj: 0
+        softpot:
+            rxCoarse: 127
+            rxFine: 127
+            txCoarse: 127
+            txFine: 127
+            rssiCoarse: 127
+            rssiFine: 127
+        rxDCOffset: 0
+        txDCOffset: 0
+        rxLevel: 50
+        txLevel: 50
+        rssiMappingFile: RSSI.dat
+        packetPlayoutTime: 10
+        disableOFlowReset: false
+        ignoreModemConfigArea: false
+        dumpModemStatus: false
+        displayModemDebugMessages: false
+        trace: false
+        debug: false
+    iden_table:
+        file: iden_table.dat
+        time: 30
+    radio_id:
+        file: rid_acl.dat
+        time: 2
+        acl: false
+    talkgroup_id:
+        file: talkgroup_rules.yml
+        time: 2
+        acl: false
+EOF
 ```
 
-```{note}
-The two `rpcPassword` pairs above are **local loopback secrets between your own two
-processes**, not something radios or a network ever see — pick anything, just make sure each
-side's value matches what the other side expects. This is the same CC↔VC RPC pattern used by
-[`config.example.yml`](https://github.com/DVMProject/dvmhost/blob/master/configs/config.example.yml)
-for a multi-host trunking site; see [`dvmhost`](../software/dvmhost/dvmhost.md#configuration-overview)
-for the full field reference, and [system-configs](../overview/system-configs.md) for the
-general pattern this quickstart is a worked example of.
-```
-
-Set `iAgreeNotToBeStupid: true` in both files.
+Both configs above already set `iAgreeNotToBeStupid: true` and `network.enable: false`
+(standalone) — see [step 8](#8-standalone-or-networked) to network them instead. The
+`modem.hotspot` tuning values, symbol-level adjustments, and Tx/Rx levels are all left at
+their defaults on purpose; that's what [calibration](#6-calibrate-each-independently) is for.
 
 ## 6. Calibrate each independently
 
