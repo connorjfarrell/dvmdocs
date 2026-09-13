@@ -1,5 +1,13 @@
 # Quickstart: Dual-Hotspot Node on an x86 PC
 
+```{warning}
+**Work in progress.** This guide has not yet been run end-to-end or verified against a real
+dual-board setup — in particular the USB bootloader-flashing steps (BOOT0 jumper location,
+exact `stm32flash` invocation) are inferred from the same mechanism used elsewhere in these
+docs, not confirmed on hardware. Treat it as a starting point, cross-check against your
+board's own documentation, and see something wrong? Fix it — see [Contributing](../contributing.md).
+```
+
 This is an end-to-end path from a bare x86/x86_64 Linux box to a single machine running
 **two independent hotspot channels** — e.g. one DMR hotspot and one P25 hotspot, or two
 talkgroups/frequencies of the same mode — off of two separate USB hotspot boards. It's a
