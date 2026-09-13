@@ -230,24 +230,26 @@ same +5 MHz duplex split, just at different points on the raster:
 - **VC** (Hotspot 2) at 464.500 MHz: `channelNo = (464.500 − 450.000) MHz / 6.25 kHz = 14500 kHz / 6.25 kHz = 2320`
   → `channelId: 0`, `channelNo: 2320` → output 464.500000 MHz, input 469.500000 MHz
 
-Copy the same `iden_table.dat` to both instances' config directories.
-
-## 5. Two configs, one trunked site
-
-Lay out two independent instance directories:
+Create both instance directories and write this exact table — **not** the stock
+`iden_table.example.dat`, which has different anchors — to the CC's directory, then copy it
+to the VC as-is (both hosts read the same table):
 
 ```bash
 sudo mkdir -p /opt/dvm/cc /opt/dvm/vc
-sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/cc/config.yml
-sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/vc/config.yml
+
+sudo tee /opt/dvm/cc/iden_table.dat > /dev/null <<'EOF'
+# ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
+0,450000000,6.25,5.000,12.5,
+EOF
+
+sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
 ```
 
-Replace the contents of `/opt/dvm/cc/iden_table.dat` with the single-row table from step 4
-(not the stock `iden_table.example.dat`), then copy it to the VC as-is — both hosts read the
-same table:
+## 5. Two configs, one trunked site
 
 ```bash
-sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
+sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/cc/config.yml
+sudo cp /opt/dvm/configs/config.example.yml /opt/dvm/vc/config.yml
 ```
 
 Both hosts run **P25 only**, full duplex, sharing the same site identity — only the channel
