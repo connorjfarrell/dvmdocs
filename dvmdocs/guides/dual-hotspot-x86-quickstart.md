@@ -1,12 +1,13 @@
 # Quickstart: Dual-Hotspot P25 Trunked Node (x86)
 
 ```{warning}
-**Work in progress.** This guide has not yet been run end-to-end or verified against real
-hardware. The `dvmfirmware-hs` branch/target/binary-name details below have been checked
-directly against the repository's `Makefile.STM32FX` on both `master` and `usb-support`; the
-BOOT0 jumper location, exact `stm32flash` behavior, and the CC↔VC RPC wiring have not been
-confirmed on physical boards. Treat it as a starting point, cross-check against your board's
-own documentation and the
+**Work in progress.** This guide is being actively corrected against real hardware testing —
+an earlier revision sent USB-connected boards to the wrong firmware branch entirely (see the
+note in step 3), which is exactly the kind of mistake that only shows up once someone actually
+flashes a board. The firmware branch/target/binary choice in step 3 and the identity-table
+math in step 4 have now been checked against real bring-up; the CC↔VC RPC wiring, the
+calibration procedure, and full site operation have not yet been confirmed end-to-end. Treat
+it as a starting point, cross-check against your board's own documentation and the
 [P25 trunking reference](../overview/system-configs.md), and see something wrong? Fix it —
 see [Contributing](../contributing.md).
 ```
@@ -48,7 +49,7 @@ Both pairs are a standard +5 MHz UHF duplex split.
 
 - One x86/x86_64 PC (Debian/Ubuntu-family recommended) running Linux
 - A single `dvmhost` build, used by two systemd services with two config files
-- Two USB-connected `MMDVM_HS_Dual` boards, each flashed with the `usb-support` branch of
+- Two USB-connected `MMDVM_HS_Dual` boards, each flashed with
   [`dvmfirmware-hs`](../software/dvmfirmware/dvmfirmware-hs.md)
 - A working one-site duplex P25 trunked system: radios register on the CC (451.800/456.800
   MHz) and get granted to the VC (464.500/469.500 MHz) for calls
@@ -139,39 +140,36 @@ need cross-compilation (not needed here — you're building natively for x86_64)
 ## 3. Flash both boards
 
 ```bash
-git clone --recurse-submodules -b usb-support https://github.com/DVMProject/dvmfirmware-hs.git
+git clone --recurse-submodules https://github.com/DVMProject/dvmfirmware-hs.git
 cd dvmfirmware-hs
 make -f Makefile.STM32FX mmdvm-hs-hat-dual
 ```
 
+This builds the **`master`** branch, producing a plain `dvm-firmware-hs_f1.bin` — no separate
+bootloader stage, flashed as a single image.
+
 :::{note}
-**Use the `usb-support` branch, not `master`, for USB-connected boards.** Confirmed directly
-against both branches' `Makefile.STM32FX`: `master` only wires up GPIO/hat targets
-(`mmdvm-hs-hat`, `mmdvm-hs-hat-dual`, `zumspot-adf7021`, `pihat-7021-r2`) under
-`-DSTM32_USART1_HOST` — it references USB source files but never compiles them into any
-target. `usb-support` carries the same board targets (minus `pihat-7021-r2`) plus
-`lonestar-usb`, all rebuilt under `-DSTM32_USB_HOST` instead. That flag is the actual
-USB-vs-GPIO switch, applied branch-wide to every target — it isn't tied to one board profile.
+**A previous revision of this guide sent you to the `usb-support` branch and a bootloader-enabled
+build instead — that was wrong for this hardware, and could leave a board showing only its power
+LED after flashing.** The mistake: "the board plugs into USB" is not the same question as
+"does the STM32 chip implement USB itself." Most `MMDVM_HS_Dual` boards — including this one,
+since it enumerates as `/dev/ttyUSB0`/`/dev/ttyUSB1` under a CP210x/CH340/FTDI vendor ID — use
+an external USB-to-serial bridge chip wired to the STM32's plain UART. From the STM32's own
+point of view that's indistinguishable from a Raspberry Pi's GPIO UART, which is exactly what
+`master`'s `-DSTM32_USART1_HOST` targets (`mmdvm-hs-hat`, `mmdvm-hs-hat-dual`,
+`zumspot-adf7021`) are built for, and what this guide now uses.
 
-**The target is picked by your physical ADF7021 hardware, not by "USB vs GPIO."** For a
-`MMDVM_HS_Dual`-style board — two ADF7021 chips, full duplex — the target is
-`mmdvm-hs-hat-dual` whether you run it over its GPIO header or, as here, over USB. (For
-reference: a single-ADF7021 board with no vendor-specific profile is `zumspot-adf7021`; a
-single-ADF7021 `MMDVM_HS_Hat`-style board is `mmdvm-hs-hat`; a bare USB dongle with no
-hat/GPIO form factor at all, e.g. a LoneStar USB stick, is `lonestar-usb`.)
-
-Confirm against the actual target list on `usb-support` before building — it's a fast check
-and cheaper than a wrong build:
-
-```bash
-grep -E '^[a-z0-9_-]+:' Makefile.STM32FX
-```
-
-**The output binary is also different on this branch.** Every target on `usb-support` routes
-through a bootloader-enabled build (`bl` → `release_f1bl`), producing
-`dvm-firmware-hs_f1bl.bin` — not `dvm-firmware-hs_f1.bin`, which is what `master`'s plain `hs`
-build produces. Use the `_f1bl` filename below; confirm with `ls *.bin` in the build directory
-if in doubt.
+`usb-support`'s `-DSTM32_USB_HOST` targets (built via the `bl` bootloader stage, producing
+`dvm-firmware-hs_f1bl.bin` linked to run from flash offset `0x2000`/`0x08002000`, not `0x0`)
+are for boards where the **STM32 chip itself** is the USB device — no separate bridge chip —
+which would enumerate under a different VID/PID and typically show up as `/dev/ttyACM*`, not
+`/dev/ttyUSB*`. `lonestar-usb` is the named example of that kind of board. If that's genuinely
+what you have, you need the two-stage bootloader-then-application flash instead: flash
+`STM32F10X_Platform/utils/bootloader/generic_boot20_pc13_long_rst.bin` at the default address
+first, *then* the `_f1bl.bin` application at `-S 0x08002000` — see the
+[upstream `MMDVM_HS` `Makefile`'s `serial-bl` target](https://github.com/juribeparada/MMDVM_HS/blob/master/Makefile)
+for the exact reference sequence. For a `/dev/ttyUSB*` board like the one this guide targets,
+you do not need any of that.
 :::
 
 Both boards are the same `MMDVM_HS_Dual` type, so build once and flash it to both. Confirm
@@ -183,31 +181,46 @@ later if you don't check now:
    board's documentation; boards vary here, so check the seller's instructions.
 2. Flash over its device:
    ```bash
-   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/ttyUSB0   # CC board
-   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/ttyUSB1   # VC board
+   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/ttyUSB0   # CC board
+   sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/ttyUSB1   # VC board
    ```
 3. Remove the boot jumper and power-cycle (or `-R` above already resets it).
+
+```{tip}
+**Flashed successfully (stm32flash verified) but only the power LED lights, nothing else
+blinks?** A "verified" flash only confirms the bytes you wrote match what's now in flash — it
+says nothing about whether that image is *linked to run from the address it's sitting at*.
+If you flashed the wrong firmware family (the old `_f1bl.bin` bootloader-enabled build, meant
+for offset `0x08002000`, written to the default `0x08000000` instead), the reset vector table
+at `0x08000000` won't match where the code actually expects to run, and the core hard-faults
+before any GPIO/LED init code executes — power rail LED stays lit (it's a hardware pull), the
+D0 heartbeat LED (software-driven) never blinks. Nothing about the chip is damaged: **BOOT0 is
+a hardware pin, independent of flash contents**, so you can always get back into the ROM
+bootloader and reflash. The fix is simply to reflash with the correct `master`-branch
+`dvm-firmware-hs_f1.bin` using the exact same BOOT0 + `stm32flash` steps above.
+```
 
 :::{note}
 **"Could not communicate with modem" even though the device path is correct?** This is
 `dvmhost` failing to talk to the *firmware*, not a path problem — check, in order:
 
-1. **BOOT0 jumper still fitted.** If it's still bridged after flashing, the board stays in the
+1. **Wrong firmware family flashed.** See the tip above — this is the most likely cause if
+   `stm32flash` reported a clean write/verify but the board is otherwise dead (power LED only).
+2. **BOOT0 jumper still fitted.** If it's still bridged after flashing, the board stays in the
    ST bootloader (which speaks the `stm32flash` protocol, not the DVM modem protocol) and will
    never respond to `dvmhost`. Remove it and power-cycle the board.
-2. **ModemManager or `brltty` has the port open.** Both are common on desktop Ubuntu/Debian
+3. **ModemManager or `brltty` has the port open.** Both are common on desktop Ubuntu/Debian
    installs and grab newly-plugged USB-serial devices to probe them. The
    `ENV{ID_MM_DEVICE_IGNORE}="1"` udev rule above handles ModemManager for these two devices
    specifically; if `brltty` is installed and you don't need it,
    `sudo systemctl disable --now brltty.service` (or `apt remove brltty`) stops it grabbing
    ports too. `sudo lsof /dev/ttyUSB0` (or `fuser`) shows you if something else already has the
    port open.
-3. **`dialout` group membership hasn't taken effect yet.** `usermod -aG` only applies to *new*
-   login sessions — if you're testing interactively as a user you just added, log out and back
-   in (or `newgrp dialout` in the current shell) before assuming permissions are the problem.
-4. **Wrong baud rate.** `system.modem.protocol.uart.speed` must be `115200` unless you changed
+4. **`dialout` group membership hasn't taken effect yet.** Not applicable if you're running as
+   `root`; otherwise, `usermod -aG` only applies to *new* login sessions.
+5. **Wrong baud rate.** `system.modem.protocol.uart.speed` must be `115200` unless you changed
    it in the firmware — the configs in step 5 already use the default.
-5. **Board never actually flashed.** Confirm `stm32flash` printed `Wrote and verified` with no
+6. **Board never actually flashed.** Confirm `stm32flash` printed `Wrote and verified` with no
    errors for *each* board, not just the first — a failed second flash is an easy thing to miss
    when running both commands back-to-back.
 :::
