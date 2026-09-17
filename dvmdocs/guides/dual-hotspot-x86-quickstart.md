@@ -1,15 +1,10 @@
 # Quickstart: Dual-Hotspot P25 Trunked Node (x86)
 
 ```{warning}
-**Work in progress.** This guide is being actively corrected against real hardware testing —
-an earlier revision sent USB-connected boards to the wrong firmware branch entirely (see the
-note in step 3), which is exactly the kind of mistake that only shows up once someone actually
-flashes a board. The firmware branch/target/binary choice in step 3 and the identity-table
-math in step 4 have now been checked against real bring-up; the CC↔VC RPC wiring, the
-calibration procedure, and full site operation have not yet been confirmed end-to-end. Treat
-it as a starting point, cross-check against your board's own documentation and the
-[P25 trunking reference](../overview/system-configs.md), and see something wrong? Fix it —
-see [Contributing](../contributing.md).
+**Work in progress.** Firmware selection (step 3) and the identity-table math (step 4) have
+been checked against real hardware bring-up; networking, calibration, and full channel-grant
+operation have not yet been confirmed end-to-end. Cross-check against your board's own
+documentation, and see something wrong? Fix it — see [Contributing](../contributing.md).
 ```
 
 This is an end-to-end path from a bare x86/x86_64 Linux box to a single machine running a
@@ -145,37 +140,21 @@ cd dvmfirmware-hs
 make -f Makefile.STM32FX mmdvm-hs-hat-dual
 ```
 
-This builds the **`master`** branch, producing a plain `dvm-firmware-hs_f1.bin` — no separate
-bootloader stage, flashed as a single image.
+This builds the **`master`** branch, producing a plain `dvm-firmware-hs_f1.bin` flashed as a
+single image at the default address — correct for `MMDVM_HS_Dual` boards using an external
+USB-serial bridge chip (CP210x/CH340/FTDI — i.e. anything showing up as `/dev/ttyUSB*`, which
+is what this guide assumes throughout).
 
-:::{note}
-**A previous revision of this guide sent you to the `usb-support` branch and a bootloader-enabled
-build instead — that was wrong for this hardware, and could leave a board showing only its power
-LED after flashing.** The mistake: "the board plugs into USB" is not the same question as
-"does the STM32 chip implement USB itself." Most `MMDVM_HS_Dual` boards — including this one,
-since it enumerates as `/dev/ttyUSB0`/`/dev/ttyUSB1` under a CP210x/CH340/FTDI vendor ID — use
-an external USB-to-serial bridge chip wired to the STM32's plain UART. From the STM32's own
-point of view that's indistinguishable from a Raspberry Pi's GPIO UART, which is exactly what
-`master`'s `-DSTM32_USART1_HOST` targets (`mmdvm-hs-hat`, `mmdvm-hs-hat-dual`,
-`zumspot-adf7021`) are built for, and what this guide now uses.
-
-`usb-support`'s `-DSTM32_USB_HOST` targets (built via the `bl` bootloader stage, producing
-`dvm-firmware-hs_f1bl.bin` linked to run from flash offset `0x2000`/`0x08002000`, not `0x0`)
-are for boards where the **STM32 chip itself** is the USB device — no separate bridge chip —
-which would enumerate under a different VID/PID and typically show up as `/dev/ttyACM*`, not
-`/dev/ttyUSB*`. `lonestar-usb` is the named example of that kind of board. If that's genuinely
-what you have, you need the two-stage bootloader-then-application flash instead: flash
-`STM32F10X_Platform/utils/bootloader/generic_boot20_pc13_long_rst.bin` at the default address
-first, *then* the `_f1bl.bin` application at `-S 0x08002000` — see the
-[upstream `MMDVM_HS` `Makefile`'s `serial-bl` target](https://github.com/juribeparada/MMDVM_HS/blob/master/Makefile)
-for the exact reference sequence. For a `/dev/ttyUSB*` board like the one this guide targets,
-you do not need any of that.
-:::
+```{note}
+If your board instead enumerates as `/dev/ttyACM*` — meaning the STM32 itself implements USB,
+with no separate bridge chip (`lonestar-usb` is the named example) — you need the
+`usb-support` branch's bootloader-enabled build and a two-stage flash instead. That's a
+different procedure; see the `dvmfirmware-hs` repository for that path.
+```
 
 Both boards are the same `MMDVM_HS_Dual` type, so build once and flash it to both. Confirm
 which board is on which labeled port (per the [Device names](#device-names) note above) before
-you start — flashing the "wrong" board isn't harmful, but it'll make you doubt your labeling
-later if you don't check now:
+you start:
 
 1. Put the board in bootloader mode — jumper **BOOT0** (sometimes labeled **J1**) per your
    board's documentation; boards vary here, so check the seller's instructions.
@@ -184,45 +163,39 @@ later if you don't check now:
    sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/ttyUSB0   # CC board
    sudo stm32flash -v -w dvm-firmware-hs_f1.bin -R /dev/ttyUSB1   # VC board
    ```
-3. Remove the boot jumper and power-cycle (or `-R` above already resets it).
-
-```{tip}
-**Flashed successfully (stm32flash verified) but only the power LED lights, nothing else
-blinks?** A "verified" flash only confirms the bytes you wrote match what's now in flash — it
-says nothing about whether that image is *linked to run from the address it's sitting at*.
-If you flashed the wrong firmware family (the old `_f1bl.bin` bootloader-enabled build, meant
-for offset `0x08002000`, written to the default `0x08000000` instead), the reset vector table
-at `0x08000000` won't match where the code actually expects to run, and the core hard-faults
-before any GPIO/LED init code executes — power rail LED stays lit (it's a hardware pull), the
-D0 heartbeat LED (software-driven) never blinks. Nothing about the chip is damaged: **BOOT0 is
-a hardware pin, independent of flash contents**, so you can always get back into the ROM
-bootloader and reflash. The fix is simply to reflash with the correct `master`-branch
-`dvm-firmware-hs_f1.bin` using the exact same BOOT0 + `stm32flash` steps above.
-```
+3. Remove the boot jumper and power-cycle (or `-R` above already resets it). The board's
+   heartbeat LED (commonly labeled **D0**) should blink steadily once it's running normal
+   firmware — confirm that before moving on.
 
 :::{note}
-**"Could not communicate with modem" even though the device path is correct?** This is
-`dvmhost` failing to talk to the *firmware*, not a path problem — check, in order:
+**`dvmhost` reports "could not communicate with modem," even though the device path, firmware,
+and heartbeat LED all check out?** Check, in order:
 
-1. **Wrong firmware family flashed.** See the tip above — this is the most likely cause if
-   `stm32flash` reported a clean write/verify but the board is otherwise dead (power LED only).
-2. **BOOT0 jumper still fitted.** If it's still bridged after flashing, the board stays in the
-   ST bootloader (which speaks the `stm32flash` protocol, not the DVM modem protocol) and will
-   never respond to `dvmhost`. Remove it and power-cycle the board.
+1. **BOOT0 jumper still fitted.** The board stays in the ST bootloader (which speaks the
+   `stm32flash` protocol, not the DVM modem protocol) and won't respond to `dvmhost`. Remove
+   it and power-cycle.
+2. **The heartbeat LED stops the moment `dvmhost` (or anything) opens the port.** This is a
+   strong sign the port open is **resetting the MCU** — many of these boards wire DTR or RTS
+   into a reset/bootloader-select circuit (the same mechanism used to enter the bootloader in
+   software, e.g. for `dvmhost --boot`), and if the serial driver asserts that line on open,
+   it can hold the chip in reset or drop it back into the bootloader instead of leaving the
+   application running. To confirm: open the port with a plain terminal
+   (`screen /dev/ttyUSB0 115200` or `minicom`) and watch whether the LED stops the same way —
+   if it does, it's not `dvmhost`-specific. Things to try: check the board for a jumper that
+   disables auto-reset-on-DTR (naming varies by vendor); explicitly clear DTR/RTS on the port
+   before starting `dvmhost`, e.g.
+   ```bash
+   python3 -c "import serial; s = serial.Serial('/dev/ttyUSB0'); s.dtr = False; s.rts = False"
+   ```
+   (`python3-serial` package); or `stty -F /dev/ttyUSB0 115200 -hupcl clocal` to stop the
+   port from dropping DTR on close, which can help if it's the close/reopen cycle triggering
+   the reset rather than the open itself.
 3. **ModemManager or `brltty` has the port open.** Both are common on desktop Ubuntu/Debian
    installs and grab newly-plugged USB-serial devices to probe them. The
-   `ENV{ID_MM_DEVICE_IGNORE}="1"` udev rule above handles ModemManager for these two devices
-   specifically; if `brltty` is installed and you don't need it,
-   `sudo systemctl disable --now brltty.service` (or `apt remove brltty`) stops it grabbing
-   ports too. `sudo lsof /dev/ttyUSB0` (or `fuser`) shows you if something else already has the
-   port open.
-4. **`dialout` group membership hasn't taken effect yet.** Not applicable if you're running as
-   `root`; otherwise, `usermod -aG` only applies to *new* login sessions.
-5. **Wrong baud rate.** `system.modem.protocol.uart.speed` must be `115200` unless you changed
-   it in the firmware — the configs in step 5 already use the default.
-6. **Board never actually flashed.** Confirm `stm32flash` printed `Wrote and verified` with no
-   errors for *each* board, not just the first — a failed second flash is an easy thing to miss
-   when running both commands back-to-back.
+   `ENV{ID_MM_DEVICE_IGNORE}="1"` udev rule from step 1 handles ModemManager; if `brltty` is
+   installed and you don't need it, `sudo systemctl disable --now brltty.service`.
+   `sudo lsof /dev/ttyUSB0` shows you if something else already has the port open.
+4. **Wrong baud rate.** Must be `115200` unless you changed it in the firmware.
 :::
 
 ## 4. Build the `iden_table.dat`
@@ -861,10 +834,8 @@ defaults to `/`), and a relative `iden_table.dat` either fails to load or silent
 *some other* file with that name that happens to be sitting in whatever the CWD turned out to
 be — which is exactly what produces "the tune menu shows frequencies I never configured."
 Absolute paths make this fail safely (or not fail at all) regardless of how or from where you
-launch it. If you already deployed a config with the relative form and are seeing wrong
-frequencies, this is almost certainly why — redo the `tee` command above, or edit the four
-`file:`/`rssiMappingFile` lines in place, then relaunch `--setup` and confirm the tune menu
-now shows exactly 451.800000/456.800000 (CC) or 464.500000/469.500000 (VC).
+launch it. If the setup TUI's tune menu ever shows frequencies you didn't configure, check
+these four paths first.
 :::
 
 ## 6. Calibrate each independently
