@@ -66,60 +66,49 @@ there's no serial-console/Bluetooth prep step here — that section of the
 [installation guide](../software/dvmhost/installation.md#raspberry-pi-preparation) is Pi-only
 and does not apply.
 
-### Get stable device names
+### Device names
 
-With two identical USB-serial boards, `/dev/ttyUSB0` / `/dev/ttyUSB1` can swap between reboots
-depending on enumeration order. Pin them with a udev rule keyed on each board's USB serial
-number:
+This guide uses `/dev/ttyUSB0` for the CC board and `/dev/ttyUSB1` for the VC board directly,
+with no udev symlinks. That's simpler, but it means **you** are responsible for keeping the
+mapping stable instead of udev:
 
-```bash
-# find each board's serial number
-udevadm info -a -n /dev/ttyUSB0 | grep -m1 serial
-udevadm info -a -n /dev/ttyUSB1 | grep -m1 serial
-```
-
-```{code-block} text
-:caption: /etc/udev/rules.d/99-dvm-hotspots.rules
-
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{serial}=="AB0001", SYMLINK+="dvm-cc"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{serial}=="AB0002", SYMLINK+="dvm-vc"
-```
-
-(`idVendor` `10c4` is Silicon Labs CP210x, common on these boards; adjust for CH340/FTDI.)
-Reload with `sudo udevadm control --reload && sudo udevadm trigger`, then confirm
-`/dev/dvm-cc` and `/dev/dvm-vc` exist. Use these symlinks — not `/dev/ttyUSBx` — in both
-config files below.
+- **Label both boards and both USB ports/cables** physically (a piece of tape saying "CC" /
+  "VC" on the board and the port it plugs into) before you do anything else. Always plug each
+  board into its labeled port.
+- Linux numbers `/dev/ttyUSB*` in **enumeration order**, not by port location — if you ever
+  plug them in one at a time, unplug one, or add a third USB-serial device, the numbering can
+  shift. After (re)booting with both boards connected, confirm which is which before trusting
+  `ttyUSB0`/`ttyUSB1`:
+  ```bash
+  ls -la /dev/serial/by-path/    # often already stable per physical port, worth checking first
+  dmesg | grep -i ttyUSB         # shows the order they were detected in, most recent last
+  ```
+  If it ever looks swapped, either fix the physical cabling to match the labels, or swap the
+  `uart.port` values in the two `config.yml` files below to match reality — just keep the
+  labels and the configs in agreement.
+- If you'd rather have Linux enforce this instead of doing it by hand (recommended once you've
+  moved past initial bring-up), key a udev rule off each board's USB serial number or port
+  path — see [Installation](../software/dvmhost/installation.md) for the general approach; the
+  DVM-V24 guide's [firmware flashing section](../hardware/dvm-v24.md) shows the same pattern
+  for a single board.
 
 :::{note}
-**CH340/CH341 boards usually have no usable serial number.** The `grep -m1 serial` above walks
-up the device tree and will happily match the first `ATTRS{serial}` it finds — but on CH340
-clones (`idVendor=="1a86"`, `idProduct=="7523"`, driver `ch341-uart`) that's typically the
-*PCI host controller's* serial (e.g. `0000:00:14.0`), not a per-board ID, and it comes back
-identical for every board on the same controller. If both of your `grep` commands return the
-same value, you have this case — the serial-based rule above won't work.
-
-Key the rule on USB port path instead:
-
-```bash
-# get each board's port path
-udevadm info -a -n /dev/ttyUSB0 | grep -m1 'KERNELS=="[0-9]'
-udevadm info -a -n /dev/ttyUSB1 | grep -m1 'KERNELS=="[0-9]'
-```
+Whatever the device path, add `ENV{ID_MM_DEVICE_IGNORE}="1"` for these boards' vendor/product
+IDs so **ModemManager** — installed by default on most desktop Ubuntu/Debian systems — doesn't
+probe them. ModemManager opening/closing the port to check whether it's a cellular modem is
+one of the most common causes of "cannot communicate with modem" even when the device path is
+correct. A minimal rule that just does that, with no renaming:
 
 ```{code-block} text
 :caption: /etc/udev/rules.d/99-dvm-hotspots.rules
 
-SUBSYSTEM=="tty", KERNELS=="1-1", SYMLINK+="dvm-cc"
-SUBSYSTEM=="tty", KERNELS=="1-2", SYMLINK+="dvm-vc"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ENV{ID_MM_DEVICE_IGNORE}="1"
 ```
 
-(Substitute the actual `KERNELS` values from your `udevadm` output — the port path, not
-literally `1-1`/`1-2`.) Reload the same way. This ties the symlink to the physical USB port
-rather than the board itself, so if you later swap which port a board is plugged into, the
-symlinks swap with it — fine as long as you don't move the cables. `/dev/serial/by-path/` is
-often already populated with equivalent stable names by systemd-udevd; check
-`ls -la /dev/serial/by-path/` before writing a custom rule, since it may already give you what
-you need.
+(`10c4` is Silicon Labs CP210x, common on these boards; add another line with the right
+`idVendor` if yours use CH340 (`1a86`) or FTDI (`0403`) instead.) Reload with
+`sudo udevadm control --reload && sudo udevadm trigger`. See the troubleshooting note after
+step 3 if you're still stuck.
 :::
 
 ## 2. Build `dvmhost` once
@@ -185,16 +174,43 @@ build produces. Use the `_f1bl` filename below; confirm with `ls *.bin` in the b
 if in doubt.
 :::
 
-Both boards are the same `MMDVM_HS_Dual` type, so build once and flash it to both:
+Both boards are the same `MMDVM_HS_Dual` type, so build once and flash it to both. Confirm
+which board is on which labeled port (per the [Device names](#device-names) note above) before
+you start — flashing the "wrong" board isn't harmful, but it'll make you doubt your labeling
+later if you don't check now:
 
 1. Put the board in bootloader mode — jumper **BOOT0** (sometimes labeled **J1**) per your
    board's documentation; boards vary here, so check the seller's instructions.
-2. Flash over its stable serial device:
+2. Flash over its device:
    ```bash
-   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/dvm-cc
-   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/dvm-vc
+   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/ttyUSB0   # CC board
+   sudo stm32flash -v -w dvm-firmware-hs_f1bl.bin -R /dev/ttyUSB1   # VC board
    ```
 3. Remove the boot jumper and power-cycle (or `-R` above already resets it).
+
+:::{note}
+**"Could not communicate with modem" even though the device path is correct?** This is
+`dvmhost` failing to talk to the *firmware*, not a path problem — check, in order:
+
+1. **BOOT0 jumper still fitted.** If it's still bridged after flashing, the board stays in the
+   ST bootloader (which speaks the `stm32flash` protocol, not the DVM modem protocol) and will
+   never respond to `dvmhost`. Remove it and power-cycle the board.
+2. **ModemManager or `brltty` has the port open.** Both are common on desktop Ubuntu/Debian
+   installs and grab newly-plugged USB-serial devices to probe them. The
+   `ENV{ID_MM_DEVICE_IGNORE}="1"` udev rule above handles ModemManager for these two devices
+   specifically; if `brltty` is installed and you don't need it,
+   `sudo systemctl disable --now brltty.service` (or `apt remove brltty`) stops it grabbing
+   ports too. `sudo lsof /dev/ttyUSB0` (or `fuser`) shows you if something else already has the
+   port open.
+3. **`dialout` group membership hasn't taken effect yet.** `usermod -aG` only applies to *new*
+   login sessions — if you're testing interactively as a user you just added, log out and back
+   in (or `newgrp dialout` in the current shell) before assuming permissions are the problem.
+4. **Wrong baud rate.** `system.modem.protocol.uart.speed` must be `115200` unless you changed
+   it in the firmware — the configs in step 5 already use the default.
+5. **Board never actually flashed.** Confirm `stm32flash` printed `Wrote and verified` with no
+   errors for *each* board, not just the first — a failed second flash is an easy thing to miss
+   when running both commands back-to-back.
+:::
 
 ## 4. Build the `iden_table.dat`
 
@@ -219,16 +235,25 @@ DVMProject table uses — don't deviate from it without a reason.
 :caption: iden_table.dat
 
 # ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
-0,450000000,6.25,5.000,12.5,
+4,450000000,6.25,5.000,12.5,
 ```
 
-One identity (`ChId 0`) anchored at 450.000000 MHz covers both channels — they're both on the
+```{note}
+The identity number (`4` here) isn't arbitrary — it must match whatever identity slot **your
+radio's own codeplug/bandplan** expects for this band segment. `dvmhost` doesn't care what
+number you pick as long as `channelId` in `config.yml` matches the row, but the *radio* only
+knows how to resolve OTA channel grants against the identity numbers it was programmed with.
+If your bandplan uses identity 4 for this band, the table row and both configs' `channelId`
+must all say `4`, not `0`.
+```
+
+One identity (`ChId 4`) anchored at 450.000000 MHz covers both channels — they're both on the
 same +5 MHz duplex split, just at different points on the raster:
 
 - **CC** (Hotspot 1) at 451.800 MHz: `channelNo = (451.800 − 450.000) MHz / 6.25 kHz = 1800 kHz / 6.25 kHz = 288`
-  → `channelId: 0`, `channelNo: 288` → output 451.800000 MHz, input 456.800000 MHz
+  → `channelId: 4`, `channelNo: 288` → output 451.800000 MHz, input 456.800000 MHz
 - **VC** (Hotspot 2) at 464.500 MHz: `channelNo = (464.500 − 450.000) MHz / 6.25 kHz = 14500 kHz / 6.25 kHz = 2320`
-  → `channelId: 0`, `channelNo: 2320` → output 464.500000 MHz, input 469.500000 MHz
+  → `channelId: 4`, `channelNo: 2320` → output 464.500000 MHz, input 469.500000 MHz
 
 Create both instance directories and write this exact table — **not** the stock
 `iden_table.example.dat`, which has different anchors — to the CC's directory, then copy it
@@ -239,7 +264,7 @@ sudo mkdir -p /opt/dvm/cc /opt/dvm/vc
 
 sudo tee /opt/dvm/cc/iden_table.dat > /dev/null <<'EOF'
 # ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
-0,450000000,6.25,5.000,12.5,
+4,450000000,6.25,5.000,12.5,
 EOF
 
 sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
@@ -434,7 +459,7 @@ system:
     config:
         authoritative: true
         supervisor: false
-        channelId: 0
+        channelId: 4
         channelNo: 288
         controlCh:
             rpcAddress: 127.0.0.1
@@ -443,7 +468,7 @@ system:
             notifyEnable: true
             presence: 120
         voiceChNo:
-            - channelId: 0
+            - channelId: 4
               channelNo: 2320
               rpcAddress: 127.0.0.1
               rpcPort: 9891
@@ -470,7 +495,7 @@ system:
             type: "uart"
             mode: "air"
             uart:
-                port: /dev/dvm-cc
+                port: /dev/ttyUSB0
                 speed: 115200
         rxInvert: false
         txInvert: false
@@ -515,7 +540,7 @@ system:
         txDCOffset: 0
         rxLevel: 50
         txLevel: 50
-        rssiMappingFile: RSSI.dat
+        rssiMappingFile: /opt/dvm/cc/RSSI.dat
         packetPlayoutTime: 10
         disableOFlowReset: false
         ignoreModemConfigArea: false
@@ -524,14 +549,14 @@ system:
         trace: false
         debug: false
     iden_table:
-        file: iden_table.dat
+        file: /opt/dvm/cc/iden_table.dat
         time: 30
     radio_id:
-        file: rid_acl.dat
+        file: /opt/dvm/cc/rid_acl.dat
         time: 2
         acl: false
     talkgroup_id:
-        file: talkgroup_rules.yml
+        file: /opt/dvm/cc/talkgroup_rules.yml
         time: 2
         acl: false
 EOF
@@ -710,7 +735,7 @@ system:
     config:
         authoritative: false
         supervisor: false
-        channelId: 0
+        channelId: 4
         channelNo: 2320
         controlCh:
             rpcAddress: 127.0.0.1
@@ -741,7 +766,7 @@ system:
             type: "uart"
             mode: "air"
             uart:
-                port: /dev/dvm-vc
+                port: /dev/ttyUSB1
                 speed: 115200
         rxInvert: false
         txInvert: false
@@ -786,7 +811,7 @@ system:
         txDCOffset: 0
         rxLevel: 50
         txLevel: 50
-        rssiMappingFile: RSSI.dat
+        rssiMappingFile: /opt/dvm/vc/RSSI.dat
         packetPlayoutTime: 10
         disableOFlowReset: false
         ignoreModemConfigArea: false
@@ -795,14 +820,14 @@ system:
         trace: false
         debug: false
     iden_table:
-        file: iden_table.dat
+        file: /opt/dvm/vc/iden_table.dat
         time: 30
     radio_id:
-        file: rid_acl.dat
+        file: /opt/dvm/vc/rid_acl.dat
         time: 2
         acl: false
     talkgroup_id:
-        file: talkgroup_rules.yml
+        file: /opt/dvm/vc/talkgroup_rules.yml
         time: 2
         acl: false
 EOF
@@ -812,6 +837,22 @@ Both configs above already set `iAgreeNotToBeStupid: true` and `network.enable: 
 (standalone) — see [step 8](#8-standalone-or-networked) to network them instead. The
 `modem.hotspot` tuning values, symbol-level adjustments, and Tx/Rx levels are all left at
 their defaults on purpose; that's what [calibration](#6-calibrate-each-independently) is for.
+
+:::{note}
+**`iden_table.file`, `radio_id.file`, `talkgroup_id.file`, and `rssiMappingFile` are
+absolute paths above on purpose.** `dvmhost` resolves a relative path (the stock
+`config.example.yml` just says `iden_table.dat`) against the process's **current working
+directory at launch**, not against the directory the config file lives in. Run `dvmhost`
+manually from your home directory, or via systemd with no `WorkingDirectory=` set (systemd
+defaults to `/`), and a relative `iden_table.dat` either fails to load or silently loads
+*some other* file with that name that happens to be sitting in whatever the CWD turned out to
+be — which is exactly what produces "the tune menu shows frequencies I never configured."
+Absolute paths make this fail safely (or not fail at all) regardless of how or from where you
+launch it. If you already deployed a config with the relative form and are seeing wrong
+frequencies, this is almost certainly why — redo the `tee` command above, or edit the four
+`file:`/`rssiMappingFile` lines in place, then relaunch `--setup` and confirm the tune menu
+now shows exactly 451.800000/456.800000 (CC) or 464.500000/469.500000 (VC).
+:::
 
 ## 6. Calibrate each independently
 
@@ -838,6 +879,7 @@ Description=DVM Host - P25 Control Channel (451.800/456.800 MHz)
 After=network.target
 
 [Service]
+WorkingDirectory=/opt/dvm/cc
 ExecStart=/opt/dvm/bin/dvmhost -f -c /opt/dvm/cc/config.yml
 Restart=on-failure
 User=dvm
@@ -846,8 +888,8 @@ User=dvm
 WantedBy=multi-user.target
 ```
 
-Duplicate as `dvmhost-vc.service` pointing at `/opt/dvm/vc/config.yml`. Start the **CC
-first**, then the VC:
+Duplicate as `dvmhost-vc.service` pointing `WorkingDirectory` and `ExecStart` at
+`/opt/dvm/vc/config.yml` instead. Start the **CC first**, then the VC:
 
 ```bash
 sudo useradd -r -s /usr/sbin/nologin dvm   # if you don't already run dvmhost as its own user
