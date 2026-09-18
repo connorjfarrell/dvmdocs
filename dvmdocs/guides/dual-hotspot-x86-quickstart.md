@@ -303,8 +303,8 @@ daemon: true
 iAgreeNotToBeStupid: true
 log:
     disableNonAuthoritiveLogging: false
-    displayLevel: 1
-    fileLevel: 1
+    displayLevel: 2
+    fileLevel: 2
     useSyslog: false
     filePath: /opt/dvm/cc
     activityFilePath: /opt/dvm/cc
@@ -579,8 +579,8 @@ daemon: true
 iAgreeNotToBeStupid: true
 log:
     disableNonAuthoritiveLogging: false
-    displayLevel: 1
-    fileLevel: 1
+    displayLevel: 2
+    fileLevel: 2
     useSyslog: false
     filePath: /opt/dvm/vc
     activityFilePath: /opt/dvm/vc
@@ -840,6 +840,15 @@ system:
         acl: false
 EOF
 ```
+
+:::{note}
+**`displayLevel`/`fileLevel: 2` (Info), not `1` (Debug).** Level `1` logs a full hex dump of
+*every* frame in and out — several times a second once a radio is on the system — which is a
+lot of extra disk/console I/O for no benefit once things are working, and was a plausible
+contributor to an RPC-timing hang seen during real channel-grant testing (see the note on the
+`voiceChNo` grant RPC after [step 7](#7-two-systemd-services)). Drop to `1` temporarily if
+you're chasing a specific low-level modem issue, but run at `2` day to day.
+:::
 
 :::{note}
 **`voiceChNo` must be non-empty on *every* host, including the VC — not just the CC.**
@@ -1105,6 +1114,64 @@ sudo systemctl enable --now dvmhost-vc
 journalctl -u dvmhost-cc -f                # watch the CC's log
 ```
 
+### Auto-restart on a Tx frame processor hang
+
+On a dedicated CC, a channel **grant** makes a synchronous, blocking RPC call out to the
+granted VC (`writeRF_TSDU_Grant()` in `dvmhost`'s `p25/packet/ControlSignaling.cpp`, using each
+`voiceChNo` entry's `rpcAddress`/`rpcPort`) to permit the talkgroup there before the grant goes
+out over the air. If that RPC round-trip is slow — the VC busy, not fully up yet, anything
+delaying the reply — the CC's Tx frame processor thread stalls waiting on it, and its watchdog
+logs:
+
+```text
+E: ... (HOST) PANIC; P25, Tx frame processor hung >1s, ms = ...
+```
+
+```{warning}
+This `PANIC` does **not** kill the process — `dvmhost`'s watchdog thread (`Host.cpp`) just logs
+it and pauses the timer, so the process keeps running in a stalled state and systemd's
+`Restart=on-failure` never fires, because `dvmhost` never actually exits. A small companion
+service is what actually recovers you.
+```
+
+```bash
+sudo tee /opt/dvm/dvm-panic-watchdog.sh > /dev/null <<'EOF'
+#!/bin/bash
+# Usage: dvm-panic-watchdog.sh <systemd-unit>
+UNIT="$1"
+journalctl -u "$UNIT" -f -n0 | while read -r line; do
+    if [[ "$line" == *"PANIC; P25, Tx frame processor hung"* ]]; then
+        logger -t dvm-panic-watchdog "Detected Tx frame processor hang on $UNIT, restarting"
+        systemctl restart "$UNIT"
+    fi
+done
+EOF
+sudo chmod +x /opt/dvm/dvm-panic-watchdog.sh
+
+sudo tee /etc/systemd/system/dvm-panic-watchdog@.service > /dev/null <<'EOF'
+[Unit]
+Description=Restart %i if its P25 Tx frame processor hangs
+After=%i.service
+BindsTo=%i.service
+
+[Service]
+ExecStart=/opt/dvm/dvm-panic-watchdog.sh %i
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now dvm-panic-watchdog@dvmhost-cc.service
+sudo systemctl enable --now dvm-panic-watchdog@dvmhost-vc.service
+```
+
+`BindsTo=%i.service` ties each watchdog's `journalctl -f` follower to the lifecycle of the
+`dvmhost` instance it watches, so it starts and stops cleanly alongside `dvmhost-cc`/
+`dvmhost-vc` instead of accumulating stray followers across restarts.
+
 ## 8. Standalone, or networked
 
 - **Standalone** — leave `network.enable: false` on both. This one site works on its own;
@@ -1124,6 +1191,8 @@ journalctl -u dvmhost-cc -f                # watch the CC's log
   should show the grant and the call.
 - If networked, confirm both peers show connected on the FNE
   ([`sysview`](../software/dvmhost/supplementary.md) or the REST API).
+- `systemctl status dvm-panic-watchdog@dvmhost-cc dvm-panic-watchdog@dvmhost-vc` — both
+  `active (running)`, watching for a [Tx frame processor hang](#auto-restart-on-a-tx-frame-processor-hang).
 
 ## Source / further reading
 
