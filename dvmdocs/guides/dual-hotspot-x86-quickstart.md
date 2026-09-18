@@ -570,7 +570,7 @@ EOF
 Differs from the CC above in: `log` paths, `network.rpcPort`/`rpcPassword`,
 **`protocols.p25.control.enable: false`** (this host doesn't run a control channel),
 **`system.config.channelNo` (2320)**, **`authoritative: false`**, the **`controlCh`** entry
-pointing at the CC (with an empty `voiceChNo` — the VC doesn't grant channels), `system.identity`
+pointing at the CC, the **`voiceChNo`** entry pointing at itself (see the note below), `system.identity`
 / `cwId.callsign`, and `modem.protocol.uart.port`.
 
 ```bash
@@ -746,7 +746,12 @@ system:
             rpcPassword: "CC-RPC-PASSWORD"
             notifyEnable: true
             presence: 120
-        voiceChNo: []
+        voiceChNo:
+            - channelId: 4
+              channelNo: 910
+              rpcAddress: 127.0.0.1
+              rpcPort: 9891
+              rpcPassword: "VC-RPC-PASSWORD"
         secure:
             key: "000102030405060708090A0B0C0D0E0F"
         colorCode: 1
@@ -835,6 +840,17 @@ system:
         acl: false
 EOF
 ```
+
+:::{note}
+**`voiceChNo` must be non-empty on *every* host, including the VC — not just the CC.**
+`dvmhost` checks this unconditionally while parsing `config.yml`
+(`src/host/Host.Config.cpp`): `if (voiceChList.size() == 0U) { LogError(...); return false; }`,
+with no role check beforehand. An empty list fails immediately with `No voice channel list
+defined!` regardless of whether this host is a CC or a VC. The VC above lists itself, the same
+shape as the entry the CC lists for it. Also write it as a **block-style YAML list** (as
+above), not the flow-style `voiceChNo: [{channelId: 4, ...}]` shorthand — `dvmhost`'s YAML
+parser rejects a quoted string inside that inline form with `YAML Error - Invalid quote`.
+:::
 
 Both configs above already set `iAgreeNotToBeStupid: true` and `network.enable: false`
 (standalone) — see [step 8](#8-standalone-or-networked) to network them instead. The
