@@ -1,9 +1,10 @@
 # Quickstart: Dual-Hotspot P25 Trunked Node (x86)
 
-```{warning}
-**Work in progress.** Firmware selection (step 3) and the identity-table math (step 4) have
-been checked against real hardware bring-up; networking, calibration, and full channel-grant
-operation have not yet been confirmed end-to-end. Cross-check against your board's own
+```{note}
+This guide has been run end-to-end on real hardware: firmware selection, identity-table math,
+calibration, and full channel-grant operation — including registration, affiliation, a real
+over-the-air voice call with LDU1/LDU2 audio flowing and sub-1% BER, and a clean release. Two
+different subscriber radio makes were tested. Cross-check against your own board's
 documentation, and see something wrong? Fix it — see [Contributing](../contributing.md).
 ```
 
@@ -278,22 +279,40 @@ below are [`config.example.yml`](https://github.com/DVMProject/dvmhost/blob/mast
 with comments stripped, values set for this site, and the CC/VC-specific fields (in
 **bold** below) differing between them. Write each one directly:
 
-```{note}
-The two `rpcPassword` values (`CC-RPC-PASSWORD` / `VC-RPC-PASSWORD`) are **local loopback
-secrets between your own two processes**, not something radios or a network ever see — change
-them to anything, just keep each side's value matching what the other side expects (the CC's
-`voiceChNo[].rpcPassword` must equal the VC's `network.rpcPassword`, and the VC's
-`controlCh.rpcPassword` must equal the CC's `network.rpcPassword`). This is the same CC↔VC RPC
-pattern documented in [`dvmhost`](../software/dvmhost/dvmhost.md#configuration-overview) and
-[system-configs](../overview/system-configs.md).
+```{warning}
+**`network.rpcPassword` must be the exact same value on every host at a site — the CC, and
+every VC.** Not a cross-matched pair, not one password per host: one single shared secret,
+identical everywhere. This is easy to get wrong, because the config *looks* like it wants a
+matched pair — the CC's `voiceChNo[].rpcPassword` and the VC's `controlCh.rpcPassword` fields
+read as if they mean "the password to use when talking to that peer." They don't. Confirmed
+directly from `dvmhost`'s source: `NetRPC`'s constructor (`Host.Config.cpp`) is only ever given
+each host's own `network.rpcPassword`, and `NetRPC::open()` SHA-256-hashes it into an AES-256
+key applied to that host's socket via `udp::Socket::setPresharedKey()` — used for **all** RPC
+traffic that socket sends or receives, regardless of destination. The `voiceChNo[].rpcPassword`
+/ `controlCh.rpcPassword` fields are read **only** to power an unrelated
+"possible misconfiguration" self-pointer warning; they never touch the crypto.
+
+Give every host mismatched `network.rpcPassword` values (e.g. the tempting-looking
+`CC-RPC-PASSWORD` / `VC-RPC-PASSWORD` pairing below) and every grant fails the same way, every
+single time: the CC's permit-the-talkgroup call to the VC decrypts as garbage on arrival (wrong
+AES key), `NetRPC::clock()` logs `message received from network is malformed! <garbage> bytes
+!= <N> bytes`, the VC never marks the talkgroup permitted, and the radio gets bonked
+(`OSP_DENY_RSP`, reason `DENY_PTT_BONK`) even though the CC's own log shows the grant going out
+clean. It looks exactly like network corruption or a dvmhost bug; it's a config value that
+needs to be identical everywhere. The two configs below both use one shared value,
+`SITE1-RPC-SHARED-SECRET` — change it to anything you like, just make sure it's **exactly the
+same string on both** (and on every future VC, if you add more).
 ```
 
 ### Hotspot 1 — Control Channel (`/opt/dvm/cc/config.yml`)
 
-Differs from the VC below in: `log` paths, `network.rpcPort`/`rpcPassword`,
+Differs from the VC below in: `log` paths, `network.rpcPort`,
 **`protocols.p25.control`** (this is what makes it a CC), **`system.config.channelNo` (288)**,
-**`authoritative: true`**, the **`voiceChNo`** entry pointing at the VC, `system.identity` /
-`cwId.callsign`, and `modem.protocol.uart.port`.
+**`authoritative: true`**, **`supervisor: true`** (see the note below — required for the CC to
+actually grant/permit channels, not just optional site-controller flavor text), the
+**`voiceChNo`** entry pointing at the VC, `system.identity` / `cwId.callsign`, and
+`modem.protocol.uart.port`. `network.rpcPassword` is the same on both hosts — see the warning
+above.
 
 ```bash
 sudo tee /opt/dvm/cc/config.yml > /dev/null <<'EOF'
@@ -327,7 +346,7 @@ network:
     debug: false
     rpcAddress: 127.0.0.1
     rpcPort: 9890
-    rpcPassword: "CC-RPC-PASSWORD"
+    rpcPassword: "SITE1-RPC-SHARED-SECRET"
     rpcDebug: false
     restEnable: false
     restAddress: 127.0.0.1
@@ -459,7 +478,7 @@ system:
         location: "Example Site"
     config:
         authoritative: true
-        supervisor: false
+        supervisor: true
         channelId: 4
         channelNo: 120
         controlCh:
@@ -473,7 +492,7 @@ system:
               channelNo: 910
               rpcAddress: 127.0.0.1
               rpcPort: 9891
-              rpcPassword: "VC-RPC-PASSWORD"
+              rpcPassword: "SITE1-RPC-SHARED-SECRET"
         secure:
             key: "000102030405060708090A0B0C0D0E0F"
         colorCode: 1
@@ -565,11 +584,13 @@ EOF
 
 ### Hotspot 2 — Voice Channel (`/opt/dvm/vc/config.yml`)
 
-Differs from the CC above in: `log` paths, `network.rpcPort`/`rpcPassword`,
+Differs from the CC above in: `log` paths, `network.rpcPort`,
 **`protocols.p25.control.enable: false`** (this host doesn't run a control channel),
-**`system.config.channelNo` (2320)**, **`authoritative: false`**, the **`controlCh`** entry
-pointing at the CC, the **`voiceChNo`** entry pointing at itself (see the note below), `system.identity`
-/ `cwId.callsign`, and `modem.protocol.uart.port`.
+**`system.config.channelNo` (2320)**, **`authoritative: false`** (and `supervisor` stays
+`false` — that's CC-only), the **`controlCh`** entry pointing at the CC, the **`voiceChNo`**
+entry pointing at itself (see the note below), `system.identity` / `cwId.callsign`, and
+`modem.protocol.uart.port`. `network.rpcPassword` is the same on both hosts — see the warning
+above.
 
 ```bash
 sudo tee /opt/dvm/vc/config.yml > /dev/null <<'EOF'
@@ -603,7 +624,7 @@ network:
     debug: false
     rpcAddress: 127.0.0.1
     rpcPort: 9891
-    rpcPassword: "VC-RPC-PASSWORD"
+    rpcPassword: "SITE1-RPC-SHARED-SECRET"
     rpcDebug: false
     restEnable: false
     restAddress: 127.0.0.1
@@ -741,7 +762,7 @@ system:
         controlCh:
             rpcAddress: 127.0.0.1
             rpcPort: 9890
-            rpcPassword: "CC-RPC-PASSWORD"
+            rpcPassword: "SITE1-RPC-SHARED-SECRET"
             notifyEnable: true
             presence: 120
         voiceChNo:
@@ -749,7 +770,7 @@ system:
               channelNo: 910
               rpcAddress: 127.0.0.1
               rpcPort: 9891
-              rpcPassword: "VC-RPC-PASSWORD"
+              rpcPassword: "SITE1-RPC-SHARED-SECRET"
         secure:
             key: "000102030405060708090A0B0C0D0E0F"
         colorCode: 1
@@ -848,6 +869,21 @@ contributor to an RPC-timing hang seen during real channel-grant testing (see th
 you're chasing a specific low-level modem issue, but run at `2` day to day.
 :::
 
+:::{warning}
+**`system.config.supervisor: true` on the CC is required, not optional, for grants to actually
+work — `dvmhost`'s own log calls it "site controller mode," which undersells how load-bearing
+it is.** Confirmed from `dvmhost`'s `p25/packet/ControlSignaling.cpp`: the call that permits a
+talkgroup on the granted VC only fires `if (m_p25->m_authoritative && m_p25->m_supervisor)`.
+Leave `supervisor: false` (the `config.example.yml` default) and that whole call is silently
+skipped — the CC still issues the grant TSBK over the air, the radio thinks it's been granted,
+but the VC was never told to accept the traffic, so it gets bonked
+(`[NON-AUTHORITATIVE] Ignoring RF traffic, destination not permitted!` in the VC's log, then an
+`OSP_DENY_RSP`/`DENY_PTT_BONK` back to the radio). The VC's own startup log even points at the
+fix directly: `Host is non-authoritative! This requires a second instance configured in site
+controller mode.` — that's naming exactly this CC-side setting. Only the CC needs it; leave the
+VC's `supervisor` at `false`.
+:::
+
 :::{note}
 **`voiceChNo` must be non-empty on *every* host, including the VC — not just the CC.**
 `dvmhost` checks this unconditionally while parsing `config.yml`
@@ -934,12 +970,11 @@ analyzer with no deviation meter or P25 decode, see the note at the end of this 
 fallback method — but if you have real P25 capability, use it; it's both simpler and more
 accurate than working around its absence.
 
-```{warning}
-This exact sequence hasn't been run end-to-end against real hardware yet — the config
-structure, frequencies, and channel math earlier in this guide have been (see the warning at
-the top of this page), but the calibration walkthrough below is the next thing to validate.
-Treat specific numbers (target deviation, starting levels, sensitivity target) as a starting
-point, not gospel.
+```{note}
+This walkthrough has been run against real hardware, and a rough pass through it (nowhere near
+a precision alignment) was already enough to carry a full two-way P25 voice call with sub-1%
+BER. Treat the specific numbers here (target deviation, starting levels, sensitivity target) as
+a solid starting point, not a substitute for actually reading your own monitor.
 ```
 
 ### What you're actually adjusting
@@ -1127,9 +1162,11 @@ journalctl -u dvmhost-cc -f                # watch the CC's log
 On a dedicated CC, a channel **grant** makes a synchronous, blocking RPC call out to the
 granted VC (`writeRF_TSDU_Grant()` in `dvmhost`'s `p25/packet/ControlSignaling.cpp`, using each
 `voiceChNo` entry's `rpcAddress`/`rpcPort`) to permit the talkgroup there before the grant goes
-out over the air. If that RPC round-trip is slow — the VC busy, not fully up yet, anything
-delaying the reply — the CC's Tx frame processor thread stalls waiting on it, and its watchdog
-logs:
+out over the air. That call blocks for up to 200ms waiting on a reply (`REPLY_WAIT` in
+`NetRPC.cpp`) before giving up — a mismatched `network.rpcPassword` (see the warning above)
+makes it fail this way on *every* grant, but a slow or unresponsive VC for any other reason
+(busy, not fully up yet) can trigger the same stall. Enough of these stacked close together can
+tie up the CC's Tx frame processor thread long enough to trip its watchdog:
 
 ```text
 E: ... (HOST) PANIC; P25, Tx frame processor hung >1s, ms = ...
@@ -1196,7 +1233,11 @@ sudo systemctl enable --now dvm-panic-watchdog@dvmhost-vc.service
 - A P25 radio programmed for WACN `DEE00`, System ID `123`, output 451.800 MHz / input
   456.800 MHz should show it's registered/affiliated on the system.
 - Key up: the radio should be granted to 464.500/469.500 MHz for the call, and the VC's log
-  should show the grant and the call.
+  should show `non-authoritative TG permit, dstId = ...` right after the grant, followed by
+  `LDU1`/`LDU2` audio frames and `call in progress` lines while you're talking. If instead you
+  see `[NON-AUTHORITATIVE] Ignoring RF traffic, destination not permitted!` on the VC and the
+  radio gets bonked, re-check that `network.rpcPassword` truly is identical on both hosts and
+  that the CC has `supervisor: true` — see the warnings in [step 5](#5-two-configs-one-trunked-site).
 - If networked, confirm both peers show connected on the FNE
   ([`sysview`](../software/dvmhost/supplementary.md) or the REST API).
 - `systemctl status dvm-panic-watchdog@dvmhost-cc dvm-panic-watchdog@dvmhost-vc` — both
