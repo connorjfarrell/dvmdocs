@@ -236,10 +236,27 @@ must all say `4`, not `0`.
 One identity (`ChId 4`) anchored at 450.000000 MHz covers both channels — they're both on the
 same +5 MHz duplex split, just at different points on the raster:
 
-- **CC** (Hotspot 1) at 451.800 MHz: `channelNo = (451.800 − 450.000) MHz / 6.25 kHz = 1800 kHz / 6.25 kHz = 288`
-  → `channelId: 4`, `channelNo: 288` → output 451.800000 MHz, input 456.800000 MHz
-- **VC** (Hotspot 2) at 464.500 MHz: `channelNo = (464.500 − 450.000) MHz / 6.25 kHz = 14500 kHz / 6.25 kHz = 2320`
-  → `channelId: 4`, `channelNo: 2320` → output 464.500000 MHz, input 469.500000 MHz
+- **CC** (Hotspot 1) at 451.800 MHz: step `= (451.800 − 450.000) MHz / 6.25 kHz = 1800 kHz / 6.25 kHz = 288`
+- **VC** (Hotspot 2) at 464.500 MHz: step `= (464.500 − 450.000) MHz / 6.25 kHz = 14500 kHz / 6.25 kHz = 2320`
+
+```{warning}
+**`config.yml`'s `channelNo` field is parsed as hexadecimal text, not decimal** — confirmed
+directly from `dvmhost`'s source (`src/host/Host.Config.cpp`):
+`::strtoul(rfssConfig["channelNo"].as<std::string>(...).c_str(), NULL, 16)`. Same rule as
+`nac` / `sysId` / `netId` / `rfssId` / `siteId` (all conventionally hex for P25), just easy to
+miss here since a raster step count doesn't look like a P25 identifier. The step counts above
+are decimal — convert **each one** to hex before it goes in `config.yml`:
+
+- CC step `288` decimal → **`120`** hex → `channelNo: 120`
+- VC step `2320` decimal → **`910`** hex → `channelNo: 910`
+
+Get this backwards (write the decimal digits directly) and `dvmhost` runs on a real, different,
+silently wrong frequency — no error, no crash, just the wrong channel. See the
+[Channel Identity Tables guide](iden-tables.md) for the general rule.
+```
+
+→ `channelId: 4`, `channelNo: 120` (CC) → output 451.800000 MHz, input 456.800000 MHz
+→ `channelId: 4`, `channelNo: 910` (VC) → output 464.500000 MHz, input 469.500000 MHz
 
 Create both instance directories and write this exact table — **not** the stock
 `iden_table.example.dat`, which has different anchors — to the CC's directory, then copy it
@@ -425,12 +442,12 @@ protocols:
         verbose: true
         debug: false
 system:
-    identity: N0CALL-CC
+    identity: N0CALLCC
     timeout: 180
     duplex: true
     simplexSameFrequency: false
     modeHang: 10
-    fixedMode: false
+    fixedMode: true
     rfTalkgroupHang: 10
     activeTickDelay: 5
     idleTickDelay: 5
@@ -446,16 +463,16 @@ system:
         authoritative: true
         supervisor: false
         channelId: 4
-        channelNo: 288
+        channelNo: 120
         controlCh:
             rpcAddress: 127.0.0.1
             rpcPort: 0
             rpcPassword: "ULTRA-VERY-SECURE-DEFAULT"
-            notifyEnable: true
+            notifyEnable: false
             presence: 120
         voiceChNo:
             - channelId: 4
-              channelNo: 2320
+              channelNo: 910
               rpcAddress: 127.0.0.1
               rpcPort: 9891
               rpcPassword: "VC-RPC-PASSWORD"
@@ -475,7 +492,7 @@ system:
     cwId:
         enable: true
         time: 15
-        callsign: N0CALL-CC
+        callsign: N0CALLCC
     modem:
         protocol:
             type: "uart"
@@ -701,12 +718,12 @@ protocols:
         verbose: true
         debug: false
 system:
-    identity: N0CALL-VC
+    identity: N0CALLVC
     timeout: 180
     duplex: true
     simplexSameFrequency: false
     modeHang: 10
-    fixedMode: false
+    fixedMode: true
     rfTalkgroupHang: 10
     activeTickDelay: 5
     idleTickDelay: 5
@@ -722,7 +739,7 @@ system:
         authoritative: false
         supervisor: false
         channelId: 4
-        channelNo: 2320
+        channelNo: 910
         controlCh:
             rpcAddress: 127.0.0.1
             rpcPort: 9890
@@ -746,7 +763,7 @@ system:
     cwId:
         enable: true
         time: 15
-        callsign: N0CALL-VC
+        callsign: N0CALLVC
     modem:
         protocol:
             type: "uart"
@@ -838,21 +855,58 @@ launch it. If the setup TUI's tune menu ever shows frequencies you didn't config
 these four paths first.
 :::
 
+### Radio ID ACL and talkgroup rules
+
+Both configs above point at `rid_acl.dat` and `talkgroup_rules.yml` on each host, but neither
+file exists yet — `dvmhost` will error (`Cannot open the radio ID lookup file` /
+`Cannot open the talkgroup rules lookup file`) without them. `radio_id.acl` and
+`talkgroup_id.acl` are both `false`, so neither file needs to *restrict* anything — but
+`talkgroup_rules.yml` isn't just an access-control file: it's what defines a talkgroup as
+existing on the system at all. Without at least one entry, there's nothing for a radio to
+affiliate to or a call to grant onto.
+
+```bash
+sudo touch /opt/dvm/cc/rid_acl.dat
+sudo touch /opt/dvm/vc/rid_acl.dat
+
+sudo tee /opt/dvm/cc/talkgroup_rules.yml > /dev/null <<'EOF'
+groupVoice:
+  - name: Talkgroup 1
+    alias: Test
+    config:
+      active: true
+      affiliated: false
+      inclusion: []
+      exclusion: []
+      rewrite: []
+      always: []
+      preferred: []
+      rid_permitted: []
+    source:
+      tgid: 1
+      slot: 1
+EOF
+
+sudo cp /opt/dvm/cc/talkgroup_rules.yml /opt/dvm/vc/talkgroup_rules.yml
+```
+
 ## 6. Calibrate each independently
 
 `MMDVM_HS_Dual` boards have **no trimpots** — every Tx/Rx adjustment is a software value in
 `config.yml`, set interactively through `dvmhost`'s built-in setup TUI and then saved. This
-section is a full worked alignment for both boards against a **generic RF service monitor**
-(HP/Agilent 8920-class, Aeroflex/IFR 2975, Freedom, etc. — any unit with a spectrum-analyzer
-mode, an FM-deviation meter, a frequency-error/counter mode, and an RF signal generator with
-adjustable frequency/deviation). Exact menu names vary by monitor; the *functions* you need are
-the same everywhere, and are named generically below.
+section is a full worked alignment for both boards against a **P25-capable service monitor** —
+one with real FM deviation measurement, a frequency counter, and native P25 Phase 1 decode and
+generation (an R8200-class unit, or equivalent). If your monitor is only a bare spectrum
+analyzer with no deviation meter or P25 decode, see the note at the end of this section for a
+fallback method — but if you have real P25 capability, use it; it's both simpler and more
+accurate than working around its absence.
 
 ```{warning}
-This procedure hasn't been run end-to-end against real hardware — see the warning at the top
-of this page. The sequence and the values being adjusted are correct per the upstream
-[hotspot calibration notes](../software/dvmhost/dvmhost.md#calibration), but treat specific
-numbers (target deviation, starting levels) as a starting point, not gospel.
+This exact sequence hasn't been run end-to-end against real hardware yet — the config
+structure, frequencies, and channel math earlier in this guide have been (see the warning at
+the top of this page), but the calibration walkthrough below is the next thing to validate.
+Treat specific numbers (target deviation, starting levels, sensitivity target) as a starting
+point, not gospel.
 ```
 
 ### What you're actually adjusting
@@ -881,7 +935,7 @@ then **File → Save Settings** before quitting — that's what actually writes 
 - A cable from the board's antenna connector to the service monitor's RF In/Out (or a suitable
   attenuator — don't feed a monitor's front end directly from a Tx output above its rated
   input).
-- The service monitor's own RF generator, for the Rx half.
+- The service monitor's own P25-capable RF generator, for the Rx half.
 
 ### Calibrating the CC (451.800 / 456.800 MHz)
 
@@ -895,59 +949,63 @@ Start the setup TUI:
 `RX Level` to `50`. In the same session, set `Tx Tuning` and `Rx Tuning` to `0`. This is your
 known-good starting point every time.
 
-**Step 2 — null the carrier (Tx).**
-1. **Calibrate → Operational Mode**, select **[Tx] P25 1200 Hz Tone Mode**.
-2. On the service monitor: **spectrum analyzer mode**, centered on **451.800000 MHz**.
-3. Key up (**F12**). You should see a carrier with a clean 1200 Hz tone's sidebands.
-4. Adjust `TX Level` (the spinbox in **Level Adjustment**, or `T`/`t` in `--cal` CLI mode) so
-   the **center carrier is nulled** — suppressed as far down as it'll go — while the side
-   lobes stay symmetric and the tone stays clean. This balances the modulator; it is *not*
-   yet the final deviation level.
-5. Un-key (**F12** again).
-
-**Step 3 — set deviation (Tx).**
+**Step 2 — frequency error, first.**
 1. **Calibrate → Operational Mode**, select **[Tx] P25 1011 Hz Test Pattern (NAC293 ID1
-   TG1)** — substitute your own NAC if you changed it from the example `293`.
-2. On the service monitor: switch to **FM deviation** measurement mode, centered on
-   **451.800000 MHz**. If your monitor supports it, set a 50 Hz high-pass / 3 kHz low-pass
-   filter — this matches what the level was calibrated against upstream.
-3. Key up. Read the average deviation.
-4. Adjust `TX Level` until average deviation lands **2.75–2.83 kHz** (2.80 kHz is the target;
-   a little high, ~2.9 kHz, is acceptable and trades off slightly worse BER).
-5. Un-key.
+   TG1)** — substitute your own NAC if you changed it from the example `293`. This is the
+   actual ANSI/TIA-102.CAAA reference test pattern, not an arbitrary signal — it's what the
+   whole rest of this procedure is built around.
+2. On the service monitor: frequency-error/counter mode, centered on **451.800000 MHz**.
+3. Key up (**F12**), read the error, un-key.
+4. Enter the **opposite** value into `Tx Tuning` (e.g. `+180 Hz` error → `Tx Tuning: -180`).
 
-**Step 4 — correct frequency error (Tx).**
-1. Same pattern still selected (**[Tx] P25 1011 Hz Test Pattern**).
-2. Switch the service monitor to **frequency error** mode (ideally reading directly in Hz),
-   still on **451.800000 MHz**.
-3. Key up, read the error (e.g. "+180 Hz").
-4. Enter the **opposite** value into `Tx Tuning` (e.g. `+180 Hz` error → set `Tx Tuning` to
-   `-180`).
-5. Un-key. Repeat steps 2–4 once more — deviation and frequency trim interact slightly, so a
-   second pass tightens both up.
+Doing frequency first means the deviation reading in the next step isn't being taken on a
+slightly off-center carrier.
 
-**Step 5 — Rx frequency trim.** As a starting point, set `Rx Tuning` to the **same value** you
+**Step 3 — deviation, off the P25 decode.**
+1. Same pattern, still keyed on 451.800000 MHz.
+2. Use the monitor's **C4FM/P25 modulation analysis mode** — not a generic wideband FM
+   deviation meter — to read the peak (outer, ±3) symbol deviation. If it reports a
+   per-symbol or modulation-fidelity breakdown, use that; it reflects what an actual P25
+   receiver's symbol slicer sees, which a single generic deviation number doesn't.
+3. Adjust `TX Level` until peak deviation lands **2.75–2.83 kHz** (2.80 kHz target; a little
+   high, ~2.9 kHz, is acceptable and trades off slightly worse BER).
+
+**Step 4 — verify by decode, not just by the numbers.** With the monitor still receiving the
+same pattern, confirm it actually **decodes** cleanly — correct NAC, no or low frame errors. A
+deviation reading that "looks right" but doesn't decode cleanly means something else is off
+(symbol-level imbalance, filtering) that a deviation number alone won't catch. Un-key.
+
+**Step 5 — repeat once.** Steps 2–4 once more — frequency and deviation interact slightly at
+the margins, so a second pass tightens both up.
+
+**Step 6 — Rx frequency trim.** As a starting point, set `Rx Tuning` to the **same value** you
 landed on for `Tx Tuning` — Rx trim usually tracks Tx trim closely on these boards. You'll
 fine-tune it against BER next.
 
-**Step 6 — Rx level via BER.**
-1. On the service monitor: **RF generator mode**, set to **456.800000 MHz** (the CC's *input*
-   — what a radio transmits back to the site on), P25 C4FM modulation, a P25 1011 Hz test
-   pattern (NAC matching your config), and correct deviation (~2.80 kHz, same target as Tx).
-   Set output level to a moderate test signal (e.g. −60 dBm — high enough for a stable test
-   signal, not so high it's unrealistically strong).
+**Step 7 — Rx level via BER.**
+1. On the service monitor: RF generator mode, set to **456.800000 MHz** (the CC's *input* —
+   what a radio transmits back to the site on), generating the actual TIA-102.CAAA 1011 Hz
+   pattern (not analog FM) at the correct NAC and 2.75–2.83 kHz deviation — the value you just
+   calibrated on Tx is a good reference, since a decent generator is a "gold standard" source.
+   Start at a moderate output level, e.g. −60 dBm.
 2. On the `dvmhost` setup TUI: **Calibrate → Operational Mode**, select **[Rx] P25 1011 Hz
    Test Pattern**. The **Receive BER** window (top-right of the TUI) shows live BER while a
    signal is present.
 3. Adjust `RX Level` (and, if BER won't settle, `Rx Tuning` in small steps around the value
-   from Step 5) for the **lowest BER**.
-4. If BER stays stubbornly high: lower the service monitor's output level gradually and
-   confirm BER degrades gracefully (sane receiver behavior) rather than staying flat-bad —
-   flat-bad at all levels usually means a level/tuning problem, not a sensitivity problem. Try
-   toggling `adfGainMode` between `2` (Low) and `0` (Auto) if you suspect front-end overload
-   or desense from the nearby Tx chip.
+   from Step 6) for the **lowest BER** at this level.
 
-**Step 7 — save.** **File → Save Settings**, then **File → Quit**. Confirm the values landed
+**Step 8 — measure real sensitivity, don't just eyeball one BER number.** This is the step
+most guides skip. Sweep the generator's output level down in 3–6 dB steps and log BER at each
+one. Find where BER crosses **5 %** — the conventional P25 digital sensitivity benchmark (the
+digital analog of 12 dB SINAD for analog FM). That crossing point is your site's actual
+measured Rx sensitivity (e.g. "−114 dBm @ 5 % BER") — a real number you can record and compare
+against typical ADF7021 hotspot performance, rather than an untested assumption that "it works
+at −60 dBm." If BER stays flat-bad across the whole sweep instead of degrading gracefully as
+level drops, that's a level/tuning problem, not a sensitivity problem — recheck Steps 6–7. Try
+toggling `adfGainMode` between `2` (Low) and `0` (Auto) if you suspect front-end overload or
+desense from the nearby Tx chip.
+
+**Step 9 — save.** **File → Save Settings**, then **File → Quit**. Confirm the values landed
 in `/opt/dvm/cc/config.yml`.
 
 ### Calibrating the VC (464.500 / 469.500 MHz)
@@ -958,11 +1016,12 @@ Identical procedure, different config and frequencies:
 /opt/dvm/bin/dvmhost -c /opt/dvm/vc/config.yml --setup
 ```
 
-- Tx null/deviation/frequency-error steps: same three P25 test patterns, service monitor
-  tuned to **464.500000 MHz** instead of 451.800000 MHz.
-- Rx BER step: service monitor generating on **469.500000 MHz** instead of 456.800000 MHz.
-- Everything else (target 2.80 kHz deviation, starting `TX/RX Level` of 50, Rx Tuning
-  following Tx Tuning) is identical.
+- Tx frequency/deviation/decode steps: same test pattern, service monitor tuned to
+  **464.500000 MHz** instead of 451.800000 MHz.
+- Rx BER + sensitivity sweep: service monitor generating on **469.500000 MHz** instead of
+  456.800000 MHz.
+- Everything else (target 2.80 kHz peak deviation, starting `TX/RX Level` of 50, Rx Tuning
+  following Tx Tuning, the 5 % BER sensitivity benchmark) is identical.
 
 ```{note}
 Do this **one board at a time** — running both Tx simultaneously while reading BER on the
@@ -970,20 +1029,32 @@ other will just confuse you, and calibrate the **CC first**: you need it transmi
 data before a radio will show you anything meaningful on the VC at all.
 ```
 
+```{note}
+**No deviation meter or P25 decode, only a bare spectrum analyzer?** Fall back to a Bessel-null
+technique: transmit `[Tx] P25 1200 Hz Tone Mode`, and instead of measuring deviation directly,
+adjust `TX Level` until the **center carrier nulls** on the spectrum display (symmetric side
+lobes, clean tone) — for a 1200 Hz tone this occurs near the first Bessel zero, close to the
+2.75–2.83 kHz target, giving you an absolute deviation reference without a calibrated meter.
+Then proceed to frequency error and Rx exactly as above. This is a coarser substitute for
+Steps 2–4 above, not an additional step to do in combination with them.
+```
+
 ### Duplex self-desense
 
 Because Tx and Rx are separate ADF7021 chips sharing one small board (and often one antenna
 port), it's worth confirming the Tx chip isn't desensing the Rx chip: with the CC transmitting
-continuously (its normal state once running), re-check Rx BER on the VC and on the CC itself.
-A meaningful BER jump while the CC's Tx is active suggests you need more physical separation
-or filtering between the boards/antennas, not a software fix — `adfGainMode`/`afcEnable`
-tuning can only compensate for so much front-end overload.
+continuously (its normal state once running), re-check Rx BER (or re-run the sensitivity
+sweep) on the VC and on the CC itself. A meaningful degradation while the CC's Tx is active
+suggests you need more physical separation or filtering between the boards/antennas, not a
+software fix — `adfGainMode`/`afcEnable` tuning can only compensate for so much front-end
+overload.
 
 ### Cross-check with a real radio
 
-Once both boards are calibrated and running (step 7), the real test is a P25 radio
-programmed for this system (WACN `DEE00`, System ID `123`, CC output/input 451.800/456.800
-MHz): confirm it registers on the CC, then key up and confirm it's granted to and audible on
+Once both boards are calibrated and running (step 9), the real test is a P25 radio programmed
+for this system (WACN `DEE00`, System ID `123`, CC output/input 451.800/456.800 MHz, talkgroup
+1 from the [talkgroup rules created above](#radio-id-acl-and-talkgroup-rules)): confirm it
+registers on the CC, then key up on TG 1 and confirm it's granted to and audible on
 464.500/469.500 MHz. If the radio has its own BER/Tuner test mode, use it the same way you
 used the service monitor above for a final sanity check from the subscriber's perspective.
 

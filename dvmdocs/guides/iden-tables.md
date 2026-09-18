@@ -39,30 +39,53 @@ If the table is wrong, every one of those is wrong.
 | **Input Offset** | Transmit (radio input) offset in MHz, applied relative to the receive frequency. Negative for standard duplex splits. |
 | **Bandwidth** | Channel bandwidth in kHz (12.5 for P25 Phase 1 / DMR / NXDN). |
 
-So for identity `3` above (`Base 146000000`, spacing `6.25 kHz`, offset `+1.000 MHz`):
+So for identity `3` above (`Base 146000000`, spacing `6.25 kHz`, offset `+1.000 MHz`), thinking
+purely in raster steps:
 
-- `channelNo: 0` → radio Rx 146.00000 MHz, radio Tx 147.00000 MHz
-- `channelNo: 160` → 146.00000 + (160 × 6.25 kHz) = 147.00000 MHz Rx, 148.00000 MHz Tx
+- step `0` → radio Rx 146.00000 MHz, radio Tx 147.00000 MHz
+- step `160` → 146.00000 + (160 × 6.25 kHz) = 147.00000 MHz Rx, 148.00000 MHz Tx
 
 ```{note}
 "Radio Rx / radio Tx" here is from the **subscriber's** point of view. The site (repeater)
 transmits on the radio's Rx frequency and vice-versa.
 ```
 
+```{warning}
+**`channelNo` (and `rxChannelNo`) in `config.yml` are parsed as hexadecimal text, not
+decimal** — confirmed directly from `dvmhost`'s source
+(`src/host/Host.Config.cpp`): `::strtoul(rfssConfig["channelNo"].as<std::string>("1").c_str(),
+NULL, 16)`. This is the *same* rule `nac`, `sysId`, `netId`, `rfssId`, `siteId`, and `dmrNetId`
+already follow — P25 identifiers are conventionally hex — but it's easy to miss for
+`channelNo` specifically, because a raster step count doesn't *look* like a P25 identifier.
+
+**The raster-step math above stays in decimal.** Once you have a step count, convert *that*
+number to its hexadecimal digits and write those digits as the YAML value. Step `160` decimal
+is `0xA0` — so you write `channelNo: A0` (or `channelNo: 160` if the value you land on happens
+to *already* be what you want when read back as hex, which is easy to get wrong by accident —
+always do the conversion explicitly rather than trust a coincidence). Get this backwards and
+`dvmhost` will run with a real, different, silently-wrong frequency — not an error, not a
+crash, just the wrong channel — because `strtoul` happily parses ordinary-looking decimal
+digits as hex without complaint.
+```
+
 ## Configuring a channel
 
-In `config.yml`:
+In `config.yml`, the channel-step value from the raster math above is written as **hex text**:
 
 ```yaml
 system:
   config:
-    channelId: 3      # row in iden_table.dat
-    channelNo: 160    # channel number within that identity
+    channelId: 3      # row in iden_table.dat — plain decimal, NOT hex
+    channelNo: A0      # step 160 (decimal) written as hex "A0" — NOT "160"
 ```
+
+(`channelId` is the one exception to the hex rule — it's read with a plain decimal parse, so
+`channelId: 3` really does mean channel identity 3.)
 
 For trunking sites, the control-channel host and each voice-channel host use their own
 `channelId` / `channelNo`, and the CC host also lists every VC under
-`system.config.voiceChNo`. All hosts at a site must share the **same identity table**.
+`system.config.voiceChNo` (whose `channelNo` follows the same hex rule). All hosts at a site
+must share the **same identity table**.
 
 ### Explicit (non-standard-split) channels
 
@@ -89,7 +112,9 @@ iden-channel-calculator -h   # channel spacing and other options
 
 Pick a **Base Freq** at or below the lowest frequency you'll use, choose a spacing that
 divides your channel plan evenly (6.25 kHz is a safe universal choice), then compute the
-`channelNo` for each operating frequency.
+channel step for each operating frequency. The calculator's output is a plain decimal step
+count — convert it to hex before writing it into `config.yml`'s `channelNo` (see the warning
+above).
 
 ## Source / further reading
 
