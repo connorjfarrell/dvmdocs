@@ -258,19 +258,17 @@ silently wrong frequency — no error, no crash, just the wrong channel. See the
 → `channelId: 4`, `channelNo: 120` (CC) → output 451.800000 MHz, input 456.800000 MHz
 → `channelId: 4`, `channelNo: 910` (VC) → output 464.500000 MHz, input 469.500000 MHz
 
-Create both instance directories and write this exact table — **not** the stock
-`iden_table.example.dat`, which has different anchors — to the CC's directory, then copy it
-to the VC as-is (both hosts read the same table):
+Create the instance directories and write this exact table — **not** the stock
+`iden_table.example.dat`, which has different anchors — **once**, at `/opt/dvm` itself, since
+both hosts read the identical table and there's no reason to keep two copies in sync:
 
 ```bash
 sudo mkdir -p /opt/dvm/cc /opt/dvm/vc
 
-sudo tee /opt/dvm/cc/iden_table.dat > /dev/null <<'EOF'
+sudo tee /opt/dvm/iden_table.dat > /dev/null <<'EOF'
 # ChId,Base Freq (Hz),Spacing (kHz),Input Offset (MHz),Bandwidth (kHz),
 4,450000000,6.25,5.000,12.5,
 EOF
-
-sudo cp /opt/dvm/cc/iden_table.dat /opt/dvm/vc/iden_table.dat
 ```
 
 ## 5. Two configs, one trunked site
@@ -552,14 +550,14 @@ system:
         trace: false
         debug: false
     iden_table:
-        file: /opt/dvm/cc/iden_table.dat
+        file: /opt/dvm/iden_table.dat
         time: 30
     radio_id:
-        file: /opt/dvm/cc/rid_acl.dat
+        file: /opt/dvm/rid_acl.dat
         time: 2
         acl: false
     talkgroup_id:
-        file: /opt/dvm/cc/talkgroup_rules.yml
+        file: /opt/dvm/talkgroup_rules.yml
         time: 2
         acl: false
 EOF
@@ -828,14 +826,14 @@ system:
         trace: false
         debug: false
     iden_table:
-        file: /opt/dvm/vc/iden_table.dat
+        file: /opt/dvm/iden_table.dat
         time: 30
     radio_id:
-        file: /opt/dvm/vc/rid_acl.dat
+        file: /opt/dvm/rid_acl.dat
         time: 2
         acl: false
     talkgroup_id:
-        file: /opt/dvm/vc/talkgroup_rules.yml
+        file: /opt/dvm/talkgroup_rules.yml
         time: 2
         acl: false
 EOF
@@ -868,33 +866,45 @@ their defaults on purpose; that's what [calibration](#6-calibrate-each-independe
 
 :::{note}
 **`iden_table.file`, `radio_id.file`, `talkgroup_id.file`, and `rssiMappingFile` are
-absolute paths above on purpose.** `dvmhost` resolves a relative path (the stock
-`config.example.yml` just says `iden_table.dat`) against the process's **current working
-directory at launch**, not against the directory the config file lives in. Run `dvmhost`
-manually from your home directory, or via systemd with no `WorkingDirectory=` set (systemd
-defaults to `/`), and a relative `iden_table.dat` either fails to load or silently loads
-*some other* file with that name that happens to be sitting in whatever the CWD turned out to
-be — which is exactly what produces "the tune menu shows frequencies I never configured."
-Absolute paths make this fail safely (or not fail at all) regardless of how or from where you
-launch it. If the setup TUI's tune menu ever shows frequencies you didn't configure, check
-these four paths first.
+absolute paths above, and that's on purpose — never leave these relative.** `dvmhost` resolves
+a relative path (the stock `config.example.yml` just says `iden_table.dat`) against the
+process's **current working directory at launch**, not against the directory the config file
+lives in. Run `dvmhost` manually from your home directory, or via systemd with no
+`WorkingDirectory=` set (systemd defaults to `/`), and a relative `iden_table.dat` either fails
+to load or silently loads *some other* file with that name that happens to be sitting in
+whatever the CWD turned out to be — which is exactly what produces "the tune menu shows
+frequencies I never configured," or a flat `Cannot open the talkgroup rules lookup file` if
+nothing with that name exists in the CWD at all. Absolute paths make this fail safely (or not
+fail at all) regardless of how or from where you launch it.
+
+`iden_table.file`, `radio_id.file`, and `talkgroup_id.file` point at the **same shared files**
+(`/opt/dvm/iden_table.dat`, `/opt/dvm/rid_acl.dat`, `/opt/dvm/talkgroup_rules.yml`) on both
+hosts — there's one site-wide channel plan, ACL, and talkgroup list, so one copy of each is
+correct, not two that can drift apart. `rssiMappingFile` is the one exception: it's
+per-**board** RSSI calibration data, so it stays `/opt/dvm/cc/RSSI.dat` /
+`/opt/dvm/vc/RSSI.dat`, one per instance.
+
+**Re-check all of these after running the `--setup` TUI** (used for [calibration](#6-calibrate-each-independently)) — a full config save from `--setup` has been observed reverting
+absolute paths here back to bare filenames, and separately reverting an empty `voiceChNo` list
+back to its `[]` default. Both silently reintroduce the exact failures this note and the
+`voiceChNo` note above describe. `grep -n 'file:\|rssiMappingFile\|voiceChNo' /opt/dvm/{cc,vc}/config.yml`
+after any `--setup` save is a quick way to confirm nothing reverted.
 :::
 
 ### Radio ID ACL and talkgroup rules
 
-Both configs above point at `rid_acl.dat` and `talkgroup_rules.yml` on each host, but neither
-file exists yet — `dvmhost` will error (`Cannot open the radio ID lookup file` /
-`Cannot open the talkgroup rules lookup file`) without them. `radio_id.acl` and
-`talkgroup_id.acl` are both `false`, so neither file needs to *restrict* anything — but
-`talkgroup_rules.yml` isn't just an access-control file: it's what defines a talkgroup as
-existing on the system at all. Without at least one entry, there's nothing for a radio to
-affiliate to or a call to grant onto.
+Both configs above point at the shared `/opt/dvm/rid_acl.dat` and
+`/opt/dvm/talkgroup_rules.yml`, but neither file exists yet — `dvmhost` will error
+(`Cannot open the radio ID lookup file` / `Cannot open the talkgroup rules lookup file`)
+without them. `radio_id.acl` and `talkgroup_id.acl` are both `false`, so neither file needs to
+*restrict* anything — but `talkgroup_rules.yml` isn't just an access-control file: it's what
+defines a talkgroup as existing on the system at all. Without at least one entry, there's
+nothing for a radio to affiliate to or a call to grant onto.
 
 ```bash
-sudo touch /opt/dvm/cc/rid_acl.dat
-sudo touch /opt/dvm/vc/rid_acl.dat
+sudo touch /opt/dvm/rid_acl.dat
 
-sudo tee /opt/dvm/cc/talkgroup_rules.yml > /dev/null <<'EOF'
+sudo tee /opt/dvm/talkgroup_rules.yml > /dev/null <<'EOF'
 groupVoice:
   - name: Talkgroup 1
     alias: Test
@@ -911,8 +921,6 @@ groupVoice:
       tgid: 1
       slot: 1
 EOF
-
-sudo cp /opt/dvm/cc/talkgroup_rules.yml /opt/dvm/vc/talkgroup_rules.yml
 ```
 
 ## 6. Calibrate each independently
